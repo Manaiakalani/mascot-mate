@@ -5,9 +5,8 @@
 
 `mascot-mate` is a tiny embeddable web widget that drops a fully animated
 mascot into the corner of any page, lets the visitor ask questions, and
-streams answers back from your own OpenAI-compatible proxy. It ships with
-three mascots out of the box, a click to swap between them, and a click on
-the speech-bubble to ask away.
+streams answers back from your own OpenAI-compatible proxy. Three swappable
+mascots — Clippy, Ninja Cat, and Bob — meet your OpenAI proxy.
 
 ```
 ┌────────────────────────────────────────────────────┐
@@ -16,17 +15,6 @@ the speech-bubble to ask away.
 │   └─ server/   ← tiny SSE OpenAI proxy (Node 20+)  │
 └────────────────────────────────────────────────────┘
 ```
-
-| Mascot       | Vibe                                  | Trademark notice                                                   |
-|--------------|---------------------------------------|--------------------------------------------------------------------|
-| **Clippy**   | The 1997 Office Assistant himself     | Clippy / Clippit © Microsoft Corporation. All rights reserved.     |
-| **Ninja Cat**| The unofficial Windows team mascot    | Ninja Cat © Microsoft Corporation. All rights reserved.            |
-| **Bob**      | Yellow-smiley homage to Microsoft Bob | Microsoft Bob © Microsoft Corporation. All rights reserved.        |
-
-This project is an **unofficial, fan-made educational demo**. It is not
-affiliated with or endorsed by Microsoft, OpenAI, or any other rights
-holder. See [`NOTICE`](./NOTICE) for full trademark, attribution, and
-takedown information.
 
 ---
 
@@ -177,23 +165,13 @@ that once asked if you were writing a letter, except this one actually
 helps. No telemetry, no tracking, no analytics; just a smile in the
 corner of your page.
 
-## 🧾 License & legal
+## License
 
-- **Code** in this repository is released under the [MIT License](./LICENSE).
-- **Trademarks and character likenesses** (Clippy, Ninja Cat, Microsoft
-  Bob) are the property of their respective owners — see [`NOTICE`](./NOTICE)
-  for full attribution and a takedown contact.
-- The bundled Clippy sprite sheet is originally from the open-source
-  [ClippyJS](https://github.com/clippyjs/clippy.js) project.
-- Sprite art for Ninja Cat and Bob was generated for educational /
-  homage purposes; rights holders may request removal via an issue.
-
-### Warranty
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
-OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
-MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT.
-See [`LICENSE`](./LICENSE) and [`NOTICE`](./NOTICE) for full text.
+[MIT](./LICENSE) for the code in this repository. Mascot-mate is an
+unofficial fan/homage project and is not affiliated with, endorsed by, or
+sponsored by Microsoft. Clippy, Ninja Cat, Microsoft Bob, and all related
+characters and imagery are trademarks and copyrights of their respective
+owners.
 
 ---
 

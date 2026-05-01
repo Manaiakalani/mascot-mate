@@ -22,8 +22,13 @@ SOFTWARE.
 
 ---
 
-This MIT License covers ONLY the original source code in this repository
-(TypeScript widget, Node proxy server, build scripts, tests, and
-documentation). It does NOT grant any rights to the third-party trademarks,
-characters, or sprite artwork referenced from this repository. See the
-NOTICE file for trademark and attribution information.
+## Mascot artwork
+
+Clippy, Ninja Cat, and Microsoft Bob, along with their associated characters,
+imagery, and assets, are trademarks and copyrights of Microsoft Corporation.
+This project includes fan-made homage artwork inspired by these characters
+for nostalgic and educational purposes; it is not affiliated with, endorsed
+by, or approved by Microsoft. The MIT license above applies only to the code
+and original artwork in this repository, not to any Microsoft-owned
+intellectual property. Rights holders may open a GitHub issue with any
+concerns.
