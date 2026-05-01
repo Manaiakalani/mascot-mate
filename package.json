@@ -1,0 +1,20 @@
+{
+  "name": "mascot-monorepo",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": ["widget", "server"],
+  "scripts": {
+    "dev:widget": "npm run dev -w widget",
+    "build:widget": "npm run build -w widget",
+    "dev:server": "npm run dev -w server",
+    "build": "npm run build -w widget && npm run build -w server",
+    "lint": "eslint . --ext .ts",
+    "test": "npm run test -w widget && npm run test -w server"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.4",
+    "eslint": "^9.9.0",
+    "@typescript-eslint/parser": "^8.2.0",
+    "@typescript-eslint/eslint-plugin": "^8.2.0"
+  }
+}
