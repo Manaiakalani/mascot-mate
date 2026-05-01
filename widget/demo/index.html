@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Mascot demo</title>
+    <style>
+      body { font: 14px/1.5 system-ui, sans-serif; max-width: 720px; margin: 40px auto; padding: 0 16px; color: #222; }
+      h1 { font-size: 22px; }
+      .controls { display: flex; gap: 8px; margin: 16px 0; }
+      button { padding: 6px 12px; border: 1px solid #888; border-radius: 4px; background: #f4f4f4; cursor: pointer; }
+      button:hover { background: #eaeaea; }
+      code { background: #f4f4f4; padding: 1px 4px; border-radius: 3px; }
+    </style>
+  </head>
+  <body>
+    <h1>Mascot widget — local demo</h1>
+    <p>Click the mascot, type a question, hit <code>Ask</code>. Use the buttons below to switch.</p>
+    <div class="controls">
+      <button id="clippy">Clippy</button>
+      <button id="ninjacat">Ninjacat</button>
+      <button id="hide">Hide</button>
+      <button id="show">Show</button>
+    </div>
+    <p>Endpoint defaults to <code>http://localhost:8787/api/ask</code>. Start the proxy with <code>npm run dev -w server</code>.</p>
+
+    <script type="module">
+      import { init } from '../src/index.ts';
+      const m = await init({
+        endpoint: 'http://localhost:8787/api/ask',
+        mascot: 'clippy',
+        greeting: "Looks like you're writing a letter! Need a hand?",
+      });
+      window.Mascot = m;
+      document.getElementById('clippy').onclick = () => m.switchTo('clippy');
+      document.getElementById('ninjacat').onclick = () => m.switchTo('ninjacat').catch((e) => alert(e.message));
+      document.getElementById('hide').onclick = () => m.hide();
+      document.getElementById('show').onclick = () => m.show();
+    </script>
+  </body>
+</html>

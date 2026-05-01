@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Mascot demo</title>
+    <style>
+      body { font: 14px/1.5 system-ui, sans-serif; max-width: 720px; margin: 40px auto; padding: 0 16px; color: #222; }
+      h1 { font-size: 22px; }
+      .controls { display: flex; gap: 8px; margin: 16px 0; flex-wrap: wrap; }
+      button { padding: 6px 12px; border: 1px solid #888; border-radius: 4px; background: #f4f4f4; cursor: pointer; }
+      button:hover { background: #eaeaea; }
+      code { background: #f4f4f4; padding: 1px 4px; border-radius: 3px; }
+      .status { padding: 8px 12px; border-radius: 4px; background: #fff8d8; border: 1px solid #d8c870; font-size: 12px; }
+    </style>
+  </head>
+  <body>
+    <h1>Mascot widget — local demo</h1>
+    <p>Click the mascot, type a question, hit <code>Ask</code>. Use the buttons below to switch.</p>
+    <div class="controls">
+      <button id="clippy">Switch to Clippy</button>
+      <button id="ninjacat">Switch to Ninjacat</button>
+      <button id="bob">Switch to Bob</button>
+      <button id="hide">Hide</button>
+      <button id="show">Show</button>
+      <button id="wave">Play Greeting</button>
+    </div>
+    <div class="status" id="status">Booting widget…</div>
+    <p>Endpoint: <code>http://localhost:8787/api/ask</code> (start with <code>npm run dev:server</code>).</p>
+
+    <script type="module">
+      import { init } from './src/index.ts';
+      const status = document.getElementById('status');
+      try {
+        const m = await init({
+          endpoint: 'http://localhost:8787/api/ask',
+          mascot: 'clippy',
+        });
+        window.Mascot = m;
+        status.textContent = `Loaded mascots: ${m.available().join(', ')}. Current: ${m.current()}.`;
+        document.getElementById('clippy').onclick = () => m.switchTo('clippy');
+        document.getElementById('ninjacat').onclick = () =>
+          m.switchTo('ninjacat').catch((e) => alert(e.message));
+        document.getElementById('bob').onclick = () =>
+          m.switchTo('bob').catch((e) => alert(e.message));
+        document.getElementById('hide').onclick = () => m.hide();
+        document.getElementById('show').onclick = () => m.show();
+        document.getElementById('wave').onclick = () => m.show();
+      } catch (e) {
+        status.textContent = `Error: ${e.message}`;
+        console.error(e);
+      }
+    </script>
+  </body>
+</html>
