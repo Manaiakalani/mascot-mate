@@ -16,7 +16,7 @@ import type { MascotTheme } from './types.js';
 const DEFAULT_ACCENT = '#f1b84a';
 const DEFAULT_ACCENT_TEXT = '#3a2a00';
 const DEFAULT_GLYPH = '✨';
-const DEFAULT_LABEL = 'Ask me!';
+const DEFAULT_LABEL = 'Ask me anything…';
 
 const STYLE = `
   :host { all: initial; }
@@ -118,14 +118,63 @@ const STYLE = `
   }
 
   .ask {
-    padding: 7px 12px 7px 10px;
+    /* The ask zone now reads as a tiny chat composer: an optional
+       greeting on top ("Hi! I'm Bob"), followed by a placeholder-style
+       input field with a "/" shortcut chip on the right — visually
+       echoing the real chat box that opens on click. */
+    padding: 4px 6px 4px 8px;
     gap: 8px;
     border-top-right-radius: 13px;
     border-bottom-right-radius: 13px;
   }
-  .ask:hover { background: rgba(0, 0, 0, 0.035); }
-  .ask:active { transform: scale(0.98); }
-  .ask .label { white-space: nowrap; }
+  .ask:hover .field { border-color: color-mix(in srgb, var(--accent) 55%, rgba(0,0,0,0.12)); background: #ffffff; }
+  .ask:active .field { transform: scale(0.99); }
+  .ask:focus-visible { outline: none; }
+  .ask:focus-visible .field {
+    border-color: var(--accent);
+    box-shadow:
+      0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent),
+      inset 0 1px 2px rgba(0,0,0,0.04);
+  }
+  .ask .stack {
+    display: inline-flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
+    line-height: 1;
+  }
+  .ask .greeting {
+    font-size: 10.5px;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    /* Use a dark colour tinted slightly by the accent so the greeting
+       is always legible on the cream pill background — even when the
+       theme's accentText is white (Ninja Cat). */
+    color: color-mix(in srgb, var(--accent) 28%, #1f2328);
+    opacity: 0.92;
+    padding-left: 2px;
+    white-space: nowrap;
+  }
+  .ask .greeting[hidden] { display: none; }
+  .ask .field {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 22px;
+    padding: 3px 5px 3px 9px;
+    background: #ffffff;
+    border: 1px solid rgba(0, 0, 0, 0.14);
+    border-radius: 999px;
+    box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.04);
+    transition: border-color 120ms ease, background 120ms ease,
+                box-shadow 140ms ease, transform 120ms ease;
+  }
+  .ask .placeholder {
+    white-space: nowrap;
+    color: #6a6a72;
+    font-weight: 500;
+    font-size: 12px;
+  }
   .ask .kbd {
     display: inline-flex;
     align-items: center;
@@ -133,7 +182,6 @@ const STYLE = `
     min-width: 16px;
     height: 16px;
     padding: 0 4px;
-    margin-left: 2px;
     border-radius: 4px;
     background: linear-gradient(180deg, #ffffff 0%, #f3f3ee 100%);
     color: #4a4a4a;
@@ -142,6 +190,8 @@ const STYLE = `
     border-bottom-width: 2px;
     box-shadow: 0 1px 0 rgba(255, 255, 255, 0.7) inset;
   }
+  /* When there's no greeting, the field can grow to vertical-center. */
+  .ask:not(:has(.greeting:not([hidden]))) .stack { justify-content: center; }
 
   /* Speech-bubble tail. */
   .pill::before,
@@ -308,6 +358,7 @@ export class AskPill {
   private askBtn!: HTMLButtonElement;
   private glyphEl!: HTMLSpanElement;
   private labelEl!: HTMLSpanElement;
+  private greetingEl!: HTMLSpanElement;
   private theme: MascotTheme;
   private baseLabel: string;
   private picker: HTMLDivElement | null = null;
@@ -387,12 +438,21 @@ export class AskPill {
     this.askBtn.setAttribute('aria-haspopup', 'dialog');
     this.askBtn.setAttribute('aria-expanded', 'false');
     this.askBtn.addEventListener('click', opts.onClick);
+    const stack = document.createElement('span');
+    stack.className = 'stack';
+    this.greetingEl = document.createElement('span');
+    this.greetingEl.className = 'greeting';
+    this.greetingEl.hidden = true;
+    const field = document.createElement('span');
+    field.className = 'field';
     this.labelEl = document.createElement('span');
-    this.labelEl.className = 'label';
+    this.labelEl.className = 'placeholder';
     const kbd = document.createElement('span');
     kbd.className = 'kbd';
     kbd.textContent = '/';
-    this.askBtn.append(this.labelEl, kbd);
+    field.append(this.labelEl, kbd);
+    stack.append(this.greetingEl, field);
+    this.askBtn.append(stack);
 
     this.pill.append(this.swapBtn, divider, this.askBtn);
     if (hasPicker) {
@@ -541,11 +601,18 @@ export class AskPill {
     const accent = this.theme.accent ?? DEFAULT_ACCENT;
     const accentText = this.theme.accentText ?? DEFAULT_ACCENT_TEXT;
     const glyph = this.theme.glyph ?? DEFAULT_GLYPH;
-    const label = this.theme.pillLabel ?? this.baseLabel;
+    // pillLabel is repurposed as the greeting line above the placeholder
+    // ("Hi! I'm Bob"), and the placeholder itself is always the chat-style
+    // prompt. baseLabel (passed via constructor opts.label) overrides the
+    // placeholder if a host wants something other than "Ask me anything…".
+    const greeting = this.theme.pillLabel ?? '';
+    const placeholder = this.baseLabel;
     this.pill.style.setProperty('--accent', accent);
     this.pill.style.setProperty('--accent-text', accentText);
     this.glyphEl.textContent = glyph;
-    this.labelEl.textContent = label;
+    this.greetingEl.textContent = greeting;
+    this.greetingEl.hidden = !greeting;
+    this.labelEl.textContent = placeholder;
   }
 
   mount(parent: ParentNode = document.body): void {

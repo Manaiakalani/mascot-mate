@@ -201,7 +201,7 @@ class MascotImpl implements MascotInstance {
     this.balloon.mount(this.opts.parent);
 
     this.pill = new AskPill({
-      label: 'Ask me!',
+      label: 'Ask me anything…',
       onClick: () => this.openBubble(),
       onSwap: () => void this.swapToNextMascot(),
       mascots: this.buildMascotOptions(),
