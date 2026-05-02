@@ -184,7 +184,6 @@ def main() -> None:
             'accentText': '#1f1f1f',
             'secondary': '#E03131',
             'glyph': '🤓',
-            'pillLabel': "Hi! I'm Bob",
         },
         'animations': animations,
     }

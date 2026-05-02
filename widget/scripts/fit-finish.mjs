@@ -166,8 +166,8 @@ await closeBubble();
 await snap('04-bob');
 const bobTooltip = await shadowEval('.swap', (el) => el.title);
 check('Swap chip tooltip stays "Choose mascot"', bobTooltip === 'Choose mascot', bobTooltip);
-const bobPillLabel = await shadowEval('.ask .greeting', (el) => el.textContent.trim());
-check('Bob pill label is "Hi! I\'m Bob"', bobPillLabel === "Hi! I'm Bob", bobPillLabel);
+const bobPillLabel = await shadowEval('.ask .placeholder', (el) => el.textContent.trim());
+check('Pill placeholder is "Ask me anything…"', bobPillLabel === "Ask me anything…", bobPillLabel);
 const bobMascot = await p.evaluate(() => {
   const root = [...document.body.children].find(el =>
     el.style?.position === 'fixed' && el.querySelector?.('div[style*="background-image"]')

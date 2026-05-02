@@ -118,16 +118,19 @@ const STYLE = `
   }
 
   .ask {
-    /* The ask zone now reads as a tiny chat composer: an optional
-       greeting on top ("Hi! I'm Bob"), followed by a placeholder-style
-       input field with a "/" shortcut chip on the right — visually
-       echoing the real chat box that opens on click. */
-    padding: 4px 6px 4px 8px;
+    /* Single-line composer: a soft inset rounded "field" with
+       placeholder-style text and the "/" keyboard hint floating at
+       the right. Clicking it opens the real chat balloon. The pill
+       deliberately stays tiny — the mascot itself supplies identity. */
+    padding: 6px 6px 6px 8px;
     gap: 8px;
     border-top-right-radius: 13px;
     border-bottom-right-radius: 13px;
   }
-  .ask:hover .field { border-color: color-mix(in srgb, var(--accent) 55%, rgba(0,0,0,0.12)); background: #ffffff; }
+  .ask:hover .field {
+    border-color: color-mix(in srgb, var(--accent) 55%, rgba(0,0,0,0.12));
+    background: #ffffff;
+  }
   .ask:active .field { transform: scale(0.99); }
   .ask:focus-visible { outline: none; }
   .ask:focus-visible .field {
@@ -136,26 +139,6 @@ const STYLE = `
       0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent),
       inset 0 1px 2px rgba(0,0,0,0.04);
   }
-  .ask .stack {
-    display: inline-flex;
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 2px;
-    line-height: 1;
-  }
-  .ask .greeting {
-    font-size: 10.5px;
-    font-weight: 700;
-    letter-spacing: 0.02em;
-    /* Use a dark colour tinted slightly by the accent so the greeting
-       is always legible on the cream pill background — even when the
-       theme's accentText is white (Ninja Cat). */
-    color: color-mix(in srgb, var(--accent) 28%, #1f2328);
-    opacity: 0.92;
-    padding-left: 2px;
-    white-space: nowrap;
-  }
-  .ask .greeting[hidden] { display: none; }
   .ask .field {
     display: inline-flex;
     align-items: center;
@@ -190,8 +173,6 @@ const STYLE = `
     border-bottom-width: 2px;
     box-shadow: 0 1px 0 rgba(255, 255, 255, 0.7) inset;
   }
-  /* When there's no greeting, the field can grow to vertical-center. */
-  .ask:not(:has(.greeting:not([hidden]))) .stack { justify-content: center; }
 
   /* Speech-bubble tail. */
   .pill::before,
@@ -358,7 +339,6 @@ export class AskPill {
   private askBtn!: HTMLButtonElement;
   private glyphEl!: HTMLSpanElement;
   private labelEl!: HTMLSpanElement;
-  private greetingEl!: HTMLSpanElement;
   private theme: MascotTheme;
   private baseLabel: string;
   private picker: HTMLDivElement | null = null;
@@ -438,11 +418,6 @@ export class AskPill {
     this.askBtn.setAttribute('aria-haspopup', 'dialog');
     this.askBtn.setAttribute('aria-expanded', 'false');
     this.askBtn.addEventListener('click', opts.onClick);
-    const stack = document.createElement('span');
-    stack.className = 'stack';
-    this.greetingEl = document.createElement('span');
-    this.greetingEl.className = 'greeting';
-    this.greetingEl.hidden = true;
     const field = document.createElement('span');
     field.className = 'field';
     this.labelEl = document.createElement('span');
@@ -451,8 +426,7 @@ export class AskPill {
     kbd.className = 'kbd';
     kbd.textContent = '/';
     field.append(this.labelEl, kbd);
-    stack.append(this.greetingEl, field);
-    this.askBtn.append(stack);
+    this.askBtn.append(field);
 
     this.pill.append(this.swapBtn, divider, this.askBtn);
     if (hasPicker) {
@@ -601,17 +575,13 @@ export class AskPill {
     const accent = this.theme.accent ?? DEFAULT_ACCENT;
     const accentText = this.theme.accentText ?? DEFAULT_ACCENT_TEXT;
     const glyph = this.theme.glyph ?? DEFAULT_GLYPH;
-    // pillLabel is repurposed as the greeting line above the placeholder
-    // ("Hi! I'm Bob"), and the placeholder itself is always the chat-style
-    // prompt. baseLabel (passed via constructor opts.label) overrides the
-    // placeholder if a host wants something other than "Ask me anything…".
-    const greeting = this.theme.pillLabel ?? '';
-    const placeholder = this.baseLabel;
+    // pillLabel can override the placeholder copy if a host wants
+    // something other than "Ask me anything…". Mascot identity comes
+    // from the mascot itself + the glyph chip, so no greeting line.
+    const placeholder = this.theme.pillLabel ?? this.baseLabel;
     this.pill.style.setProperty('--accent', accent);
     this.pill.style.setProperty('--accent-text', accentText);
     this.glyphEl.textContent = glyph;
-    this.greetingEl.textContent = greeting;
-    this.greetingEl.hidden = !greeting;
     this.labelEl.textContent = placeholder;
   }
 
