@@ -32,6 +32,15 @@ export function getMascotName(id: string): string {
   return src.name;
 }
 
+/** Best-effort theme glyph for a registered mascot. Available synchronously
+ *  when the map was registered inline (the build-time glob does this). */
+export function getMascotGlyph(id: string): string | undefined {
+  const src = REGISTRY.get(id);
+  if (!src) return undefined;
+  if (typeof src.map !== 'string') return src.map.theme?.glyph;
+  return undefined;
+}
+
 export async function loadMascot(id: string): Promise<MascotManifest> {
   const src = REGISTRY.get(id);
   if (!src) throw new Error(`Unknown mascot "${id}". Registered: ${[...REGISTRY.keys()].join(', ')}`);

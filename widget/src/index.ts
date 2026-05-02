@@ -3,7 +3,7 @@ import { SpriteRenderer, makeInteractive } from './renderer.js';
 import { Balloon } from './balloon.js';
 import { AskPill } from './ask-pill.js';
 import { askStreaming, MascotError, type ChatMessage } from './chat-client.js';
-import { loadMascot, registerMascot, listMascots, getMascotName, type MascotSource } from './registry.js';
+import { loadMascot, registerMascot, listMascots, getMascotName, getMascotGlyph, type MascotSource } from './registry.js';
 import type { MascotManifest, MascotMap } from './types.js';
 
 // Discover mascots at build time. Each mascot folder contributes a map.json
@@ -204,6 +204,11 @@ class MascotImpl implements MascotInstance {
       label: 'Ask me!',
       onClick: () => this.openBubble(),
       onSwap: () => void this.swapToNextMascot(),
+      mascots: this.buildMascotOptions(),
+      currentId: this.manifest.id,
+      onPick: (id) => {
+        if (id !== this.manifest.id) void this.switchTo(id);
+      },
       theme: this.manifest.theme,
       swapTooltip: this.computeSwapTooltip(),
     });
@@ -564,6 +569,7 @@ class MascotImpl implements MascotInstance {
     // Re-theme the ask-me pill to match the new mascot.
     this.pill?.setTheme(this.manifest.theme);
     this.pill?.setSwapTooltip(this.computeSwapTooltip());
+    this.pill?.setCurrent(this.manifest.id);
     if (this.manifest.greeting && !this.idleDisabled) this.queue.play(this.manifest.greeting);
     // Update bubble greeting text to the new mascot's voice.
     const greet = this.manifest.greetingText ?? `Hi! I'm ${this.manifest.name}. Click me and ask a question.`;
@@ -578,7 +584,8 @@ class MascotImpl implements MascotInstance {
     return this.manifest.id;
   }
 
-  /** Cycle to the next registered mascot. Used by the pill's swap glyph. */
+  /** Cycle to the next registered mascot. Used by the pill's swap glyph
+   *  when no picker popover is available (≤1 mascot or test setups). */
   private async swapToNextMascot(): Promise<void> {
     const all = listMascots();
     if (all.length < 2) return;
@@ -587,13 +594,27 @@ class MascotImpl implements MascotInstance {
     await this.switchTo(nextId);
   }
 
-  /** Tooltip for the swap glyph: name of whichever mascot we'd switch to. */
+  /** Build the ordered option list shown in the pill's picker popover. */
+  private buildMascotOptions(): { id: string; name: string; glyph?: string }[] {
+    return listMascots().map((id) => ({
+      id,
+      name: getMascotName(id),
+      glyph: getMascotGlyph(id),
+    }));
+  }
+
+  /** Tooltip for the swap glyph. With a picker popover the chip opens a
+   *  menu of every mascot; without one (1 mascot, or 2 with no onPick) it
+   *  cycles to the named "next" mascot. The label reflects each mode. */
   private computeSwapTooltip(): string {
     const all = listMascots();
     if (all.length < 2) return 'Switch mascot';
-    const idx = all.indexOf(this.manifest.id);
-    const nextId = all[(idx + 1) % all.length]!;
-    return `Switch to ${getMascotName(nextId)}`;
+    if (all.length === 2) {
+      const idx = all.indexOf(this.manifest.id);
+      const nextId = all[(idx + 1) % all.length]!;
+      return `Switch to ${getMascotName(nextId)}`;
+    }
+    return 'Choose mascot';
   }
 
   // ---------- Idle scheduler ----------

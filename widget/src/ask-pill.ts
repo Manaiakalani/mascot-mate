@@ -2,8 +2,10 @@
  * A small "speech bubble" pill that hovers next to the mascot.
  *
  * Two zones share the bubble shell:
- *   • Glyph chip on the left → swap to the next registered mascot.
- *     Tooltip + aria-label make this discoverable.
+ *   • Glyph chip on the left → opens a picker popover listing every
+ *     registered mascot (or, if no picker is supplied, falls back to a
+ *     single-shot "swap to next" handler). Tooltip + aria-label make this
+ *     discoverable.
  *   • Label + keycap on the right → open the ask bubble.
  *
  * When the bubble is open, the pill hides itself.
@@ -179,6 +181,75 @@ const STYLE = `
 
   .hidden { display: none; }
 
+  /* ---------- Mascot picker popover ---------- */
+  .picker {
+    position: absolute;
+    left: 0;
+    z-index: 2;
+    min-width: 148px;
+    padding: 4px;
+    display: none;
+    flex-direction: column;
+    gap: 1px;
+    background: linear-gradient(180deg, #fffdf3 0%, #fff4c9 100%);
+    color: #1f2328;
+    border: 1px solid rgba(0, 0, 0, 0.08);
+    border-top: 2px solid var(--accent);
+    border-radius: 12px;
+    box-shadow:
+      0 1px 0 rgba(255, 255, 255, 0.9) inset,
+      0 14px 28px -8px rgba(20, 20, 20, 0.32),
+      0 4px 10px rgba(20, 20, 20, 0.14);
+  }
+  .picker.show { display: flex; }
+  /* Drop down when the pill's tail points up (pill is below mascot);
+     pop up otherwise so the popover never collides with the mascot. */
+  .pill[data-tail="down"] .picker { bottom: calc(100% + 8px); top: auto; }
+  .pill[data-tail="up"]   .picker { top: calc(100% + 8px); bottom: auto; }
+  .picker-item {
+    appearance: none;
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    padding: 6px 10px;
+    border: 0;
+    border-radius: 8px;
+    background: none;
+    color: inherit;
+    font: 600 12.5px/1.1 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    cursor: pointer;
+    text-align: left;
+    white-space: nowrap;
+    transition: background 100ms ease;
+  }
+  .picker-item:hover,
+  .picker-item:focus-visible {
+    background: color-mix(in srgb, var(--accent) 16%, transparent);
+    outline: none;
+  }
+  .picker-item[aria-current="true"] {
+    background: color-mix(in srgb, var(--accent) 28%, white);
+  }
+  .picker-item[aria-current="true"]::after {
+    content: "✓";
+    margin-left: auto;
+    padding-left: 12px;
+    color: color-mix(in srgb, var(--accent) 70%, #000);
+    font-weight: 700;
+  }
+  .picker-item .pi-glyph {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--accent) 22%, white);
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 40%, transparent) inset;
+    font-size: 13px;
+    line-height: 1;
+  }
+
   @keyframes wiggle {
     0%, 88%, 100% { transform: translateY(0) rotate(0deg); }
     91%           { transform: translateY(-2px) rotate(-1.6deg); }
@@ -202,14 +273,30 @@ const SWAP_ICON_SVG = `
   <path d="M2.5 13.5v-3.2h3.2"/>
 </svg>`;
 
+export interface MascotOption {
+  id: string;
+  name: string;
+  /** Emoji or single-char glyph shown in the popover row. */
+  glyph?: string;
+}
+
 export interface AskPillOptions {
   label?: string;
   /** Called when the ask zone is clicked. */
   onClick: () => void;
-  /** Called when the swap-mascot glyph is clicked. */
+  /**
+   * Legacy single-shot swap callback. Used only when `mascots` / `onPick`
+   * are not provided (or there are <2 mascots to choose from).
+   */
   onSwap?: () => void;
+  /** Full list of mascots to show in the picker popover. */
+  mascots?: MascotOption[];
+  /** Currently active mascot id (highlighted in the popover). */
+  currentId?: string;
+  /** Called when the user picks a mascot from the popover. */
+  onPick?: (id: string) => void;
   theme?: MascotTheme;
-  /** Tooltip shown on the glyph (e.g. "Switch to Ninjacat"). */
+  /** Tooltip shown on the glyph (e.g. "Switch mascot"). */
   swapTooltip?: string;
 }
 
@@ -223,6 +310,12 @@ export class AskPill {
   private labelEl!: HTMLSpanElement;
   private theme: MascotTheme;
   private baseLabel: string;
+  private picker: HTMLDivElement | null = null;
+  private mascots: MascotOption[] = [];
+  private currentId: string | null = null;
+  private onPick: ((id: string) => void) | null = null;
+  private outsideClickHandler: ((e: MouseEvent) => void) | null = null;
+  private outsideKeyHandler: ((e: KeyboardEvent) => void) | null = null;
 
   constructor(opts: AskPillOptions) {
     this.theme = opts.theme ?? {};
@@ -257,19 +350,34 @@ export class AskPill {
     const swapIcon = document.createElement('span');
     swapIcon.innerHTML = SWAP_ICON_SVG;
     this.swapBtn.append(this.glyphEl, swapIcon.firstElementChild!);
-    if (opts.onSwap) {
+
+    // Decide which interaction the swap chip drives. Picker wins when we
+    // have ≥2 mascots and an onPick handler. Otherwise fall back to the
+    // legacy single-action onSwap (or hide the chip entirely).
+    const hasPicker = !!opts.onPick && (opts.mascots?.length ?? 0) >= 2;
+    if (hasPicker) {
+      this.mascots = opts.mascots!.slice();
+      this.currentId = opts.currentId ?? null;
+      this.onPick = opts.onPick!;
+      this.swapBtn.setAttribute('aria-haspopup', 'menu');
+      this.swapBtn.setAttribute('aria-expanded', 'false');
+      this.swapBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this.togglePicker();
+      });
+    } else if (opts.onSwap) {
       this.swapBtn.addEventListener('click', (e) => {
         e.stopPropagation();
         opts.onSwap!();
       });
     } else {
-      // No swap handler → hide the swap zone + divider entirely.
+      // No swap behaviour at all → hide the chip + divider.
       this.swapBtn.style.display = 'none';
     }
 
     const divider = document.createElement('div');
     divider.className = 'divider';
-    if (!opts.onSwap) divider.style.display = 'none';
+    if (!hasPicker && !opts.onSwap) divider.style.display = 'none';
 
     // ---- ask zone ----
     this.askBtn = document.createElement('button');
@@ -287,8 +395,125 @@ export class AskPill {
     this.askBtn.append(this.labelEl, kbd);
 
     this.pill.append(this.swapBtn, divider, this.askBtn);
+    if (hasPicker) {
+      this.picker = document.createElement('div');
+      this.picker.className = 'picker';
+      this.picker.setAttribute('role', 'menu');
+      this.pill.appendChild(this.picker);
+      this.renderPickerItems();
+    }
     this.root.appendChild(this.pill);
     this.applyTheme();
+  }
+
+  /** Replace the mascot list shown in the picker (no-op if no picker). */
+  setMascots(mascots: MascotOption[], currentId?: string): void {
+    if (!this.picker) return;
+    this.mascots = mascots.slice();
+    if (currentId !== undefined) this.currentId = currentId;
+    this.renderPickerItems();
+  }
+
+  /** Highlight a different mascot row as the active one. */
+  setCurrent(currentId: string): void {
+    this.currentId = currentId;
+    if (!this.picker) return;
+    for (const btn of Array.from(this.picker.querySelectorAll<HTMLButtonElement>('.picker-item'))) {
+      const isCurrent = btn.dataset.mascotId === currentId;
+      btn.setAttribute('aria-current', String(isCurrent));
+    }
+  }
+
+  private renderPickerItems(): void {
+    if (!this.picker) return;
+    this.picker.innerHTML = '';
+    for (const m of this.mascots) {
+      const item = document.createElement('button');
+      item.type = 'button';
+      item.className = 'picker-item';
+      item.setAttribute('role', 'menuitemradio');
+      item.dataset.mascotId = m.id;
+      const isCurrent = m.id === this.currentId;
+      item.setAttribute('aria-current', String(isCurrent));
+      item.setAttribute('aria-checked', String(isCurrent));
+      const glyph = document.createElement('span');
+      glyph.className = 'pi-glyph';
+      glyph.setAttribute('aria-hidden', 'true');
+      glyph.textContent = m.glyph ?? '✨';
+      const name = document.createElement('span');
+      name.className = 'pi-name';
+      name.textContent = m.name;
+      item.append(glyph, name);
+      item.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this.closePicker();
+        if (m.id !== this.currentId && this.onPick) this.onPick(m.id);
+      });
+      this.picker.appendChild(item);
+    }
+  }
+
+  private togglePicker(): void {
+    if (!this.picker) return;
+    if (this.picker.classList.contains('show')) this.closePicker();
+    else this.openPicker();
+  }
+
+  private openPicker(): void {
+    if (!this.picker) return;
+    this.picker.classList.add('show');
+    this.swapBtn.setAttribute('aria-expanded', 'true');
+    // Focus the current item (or the first) for keyboard nav.
+    const current =
+      this.picker.querySelector<HTMLButtonElement>('.picker-item[aria-current="true"]') ??
+      this.picker.querySelector<HTMLButtonElement>('.picker-item');
+    current?.focus();
+    this.outsideClickHandler = (e: MouseEvent) => {
+      const path = e.composedPath();
+      if (!path.includes(this.host)) this.closePicker();
+    };
+    this.outsideKeyHandler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        this.closePicker();
+        this.swapBtn.focus();
+      } else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        this.movePickerFocus(e.key === 'ArrowDown' ? 1 : -1);
+      }
+    };
+    // Defer attaching the outside-click listener so the click that opened
+    // the popover doesn't immediately close it.
+    setTimeout(() => {
+      if (this.outsideClickHandler) document.addEventListener('click', this.outsideClickHandler);
+    }, 0);
+    document.addEventListener('keydown', this.outsideKeyHandler);
+  }
+
+  private closePicker(): void {
+    if (!this.picker) return;
+    this.picker.classList.remove('show');
+    this.swapBtn.setAttribute('aria-expanded', 'false');
+    if (this.outsideClickHandler) {
+      document.removeEventListener('click', this.outsideClickHandler);
+      this.outsideClickHandler = null;
+    }
+    if (this.outsideKeyHandler) {
+      document.removeEventListener('keydown', this.outsideKeyHandler);
+      this.outsideKeyHandler = null;
+    }
+  }
+
+  private movePickerFocus(delta: number): void {
+    if (!this.picker) return;
+    const items = Array.from(this.picker.querySelectorAll<HTMLButtonElement>('.picker-item'));
+    if (items.length === 0) return;
+    const active = this.root.activeElement as HTMLElement | null;
+    let idx = items.findIndex((b) => b === active);
+    if (idx < 0) idx = items.findIndex((b) => b.getAttribute('aria-current') === 'true');
+    if (idx < 0) idx = 0;
+    const next = (idx + delta + items.length) % items.length;
+    items[next]!.focus();
   }
 
   setTheme(theme: MascotTheme | undefined): void {
@@ -328,6 +553,7 @@ export class AskPill {
   }
 
   unmount(): void {
+    this.closePicker();
     this.host.remove();
   }
 
@@ -336,6 +562,7 @@ export class AskPill {
   }
 
   hide(): void {
+    this.closePicker();
     this.pill.classList.add('hidden');
   }
 
