@@ -87,7 +87,7 @@ const mascot1 = await p.evaluate(() => {
   const r = root.getBoundingClientRect();
   return { w: r.width, h: r.height, top: r.top, left: r.left };
 });
-check('Clippy at 115px height', mascot1?.h === 115, `actual h=${mascot1?.h}`);
+check('Clippy at 104px height', mascot1?.h === 104, `actual h=${mascot1?.h}`);
 
 // 3) Swap to Ninjacat
 await p.evaluate(() => window.Mascot.switchTo('ninjacat'));
@@ -174,7 +174,7 @@ const bobMascot = await p.evaluate(() => {
   );
   return root ? root.getBoundingClientRect().height : null;
 });
-check('Bob at 132px height', bobMascot === 132, `actual h=${bobMascot}`);
+check('Bob at 110px height', bobMascot === 110, `actual h=${bobMascot}`);
 // Picker shows all three mascots (Clippy + Ninja Cat + Bob)
 const pickerCount = await p.evaluate(() => {
   for (const host of document.body.children) {

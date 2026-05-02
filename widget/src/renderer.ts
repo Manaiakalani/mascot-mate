@@ -8,6 +8,7 @@ import type { RendererPort } from './runtime.js';
  */
 export class SpriteRenderer implements RendererPort {
   readonly el: HTMLDivElement;
+  private inner: HTMLDivElement;
   private overlays: HTMLDivElement[] = [];
   private scale: number;
 
@@ -24,6 +25,9 @@ export class SpriteRenderer implements RendererPort {
     this.scale = scale;
     const dw = Math.round(w * scale);
     const dh = Math.round(h * scale);
+    // Outer root carries the drop-shadow filter and is the interactive
+    // / focusable element. We deliberately do NOT clip it so the soft
+    // shadow can extend past the sprite bounds.
     const root = document.createElement('div');
     root.className = 'mascot-agent';
     root.setAttribute('role', 'button');
@@ -39,14 +43,24 @@ export class SpriteRenderer implements RendererPort {
       bottom: 'max(24px, env(safe-area-inset-bottom, 0px) + 16px)',
       right: 'max(24px, env(safe-area-inset-right, 0px) + 16px)',
       display: 'none',
-      // overflow:hidden prevents adjacent sprite cells from leaking past
-      // the layout box when sub-pixel rounding from transform: scale()
-      // would otherwise expose them. Without this, animations could show
-      // ghost frames bleeding in from neighbouring cells.
-      overflow: 'hidden',
       filter: 'drop-shadow(0 6px 8px rgba(0, 0, 0, 0.18)) drop-shadow(0 1px 2px rgba(0, 0, 0, 0.12))',
       transition: 'filter 160ms ease-out',
     } satisfies Partial<CSSStyleDeclaration>);
+
+    // Inner wrapper is the same size as the layout box and clips at
+    // its bounds. This stops adjacent sprite cells from bleeding past
+    // the cell at non-integer scales (sub-pixel rounding leaks
+    // neighbouring frame content otherwise) — without clipping the
+    // outer drop-shadow.
+    const inner = document.createElement('div');
+    inner.setAttribute('aria-hidden', 'true');
+    Object.assign(inner.style, {
+      position: 'absolute',
+      inset: '0',
+      overflow: 'hidden',
+    } satisfies Partial<CSSStyleDeclaration>);
+    root.appendChild(inner);
+    this.inner = inner;
 
     for (let i = 0; i < map.overlayCount; i++) {
       const o = document.createElement('div');
@@ -63,7 +77,7 @@ export class SpriteRenderer implements RendererPort {
         transform: `scale(${scale})`,
         transformOrigin: 'top left',
       } satisfies Partial<CSSStyleDeclaration>);
-      root.appendChild(o);
+      inner.appendChild(o);
       this.overlays.push(o);
     }
     this.el = root;

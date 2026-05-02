@@ -272,19 +272,16 @@ class MascotImpl implements MascotInstance {
   private async mountMascot(id: string): Promise<void> {
     this.manifest = await loadMascot(id);
     this.clickIdx = 0;
-    // Per-mascot target render height. We tune these so each mascot's
-    // *visible* character (non-transparent pixel bbox) lands at roughly
-    // the same on-screen height — Clippy is a thin paperclip with high
-    // frame fill, Ninjacat & Bob are chunky characters with lower fill,
-    // so identical frame heights would leave Clippy looking tiny. The
-    // values below produce visible character heights of ~104 / ~117 /
-    // ~112 px — within ~13 % of one another while preserving source
-    // sharpness (Clippy isn't upscaled past its retina-friendly limit).
+    // Target render heights tuned for visual parity with Ninja Cat
+    // (the slimmest mascot). Clippy and Bob are visually wider, so
+    // matching their frame heights to Ninja Cat's 128 px makes them
+    // feel chunkier; we shave a bit off so all three read at a similar
+    // on-screen weight.
     const TARGET_HEIGHTS: Record<string, number> = {
-      clippy: 115,
-      bob: 132,
+      clippy: 104,
+      bob: 110,
     };
-    const DEFAULT_TARGET_H = 128; // ninjacat & any future tall mascot
+    const DEFAULT_TARGET_H = 128;
     const targetH = TARGET_HEIGHTS[id] ?? DEFAULT_TARGET_H;
     const frameH = this.manifest.map.framesize[1];
     const scale = targetH / frameH;
