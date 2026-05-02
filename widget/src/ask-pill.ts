@@ -292,6 +292,22 @@ const STYLE = `
     .pill:hover { transform: none; }
     .swap:hover .glyph, .swap:hover .swap-icon { transform: none; }
   }
+
+  /* Coarse pointers (touch): bigger tap targets, slightly larger field
+     so iOS / Android users hit reliably. Apple HIG recommends 44px;
+     we get close without exploding the visual footprint. */
+  @media (pointer: coarse) {
+    .swap { padding: 8px 10px 8px 11px; }
+    .swap .glyph { width: 22px; height: 22px; font-size: 14px; }
+    .ask { padding: 7px 7px 7px 9px; }
+    .ask .field { min-height: 26px; padding: 4px 6px 4px 10px; }
+    .ask .placeholder { font-size: 13px; }
+    .picker-item { padding: 10px 12px; }
+  }
+  /* Narrow viewports — keep pill from running off the edge. */
+  @media (max-width: 380px) {
+    .ask .placeholder { max-width: 130px; overflow: hidden; text-overflow: ellipsis; }
+  }
 `;
 
 // Tiny SVG ↻ icon, inlined so it inherits currentColor.

@@ -9,7 +9,9 @@ export default defineConfig({
       fileName: (fmt) => (fmt === 'es' ? 'mascot.js' : 'mascot.iife.js'),
       formats: ['es', 'iife'],
     },
-    sourcemap: true,
+    sourcemap: false,
+    target: 'es2019',
+    minify: 'esbuild',
     rollupOptions: {
       output: { inlineDynamicImports: true },
     },
