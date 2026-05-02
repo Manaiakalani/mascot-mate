@@ -39,6 +39,11 @@ export class SpriteRenderer implements RendererPort {
       bottom: 'max(24px, env(safe-area-inset-bottom, 0px) + 16px)',
       right: 'max(24px, env(safe-area-inset-right, 0px) + 16px)',
       display: 'none',
+      // overflow:hidden prevents adjacent sprite cells from leaking past
+      // the layout box when sub-pixel rounding from transform: scale()
+      // would otherwise expose them. Without this, animations could show
+      // ghost frames bleeding in from neighbouring cells.
+      overflow: 'hidden',
       filter: 'drop-shadow(0 6px 8px rgba(0, 0, 0, 0.18)) drop-shadow(0 1px 2px rgba(0, 0, 0, 0.12))',
       transition: 'filter 160ms ease-out',
     } satisfies Partial<CSSStyleDeclaration>);

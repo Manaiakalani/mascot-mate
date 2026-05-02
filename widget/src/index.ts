@@ -622,12 +622,14 @@ class MascotImpl implements MascotInstance {
   // feels alive instead of frozen. The timer is reset on any meaningful user
   // activity (click, swap, ask, open-bubble) and pauses while the bubble is
   // open or the queue is busy.
-  // Window of "doing nothing" between idle micro-animations. Tightened
-  // from the original 6-14 s so the mascot feels alive — without making
-  // it twitchy. Combined with multi-history variety this keeps repeats
-  // rare even when an idle pool is small.
-  private static readonly IDLE_MIN_MS = 3_500;
-  private static readonly IDLE_MAX_MS = 8_500;
+  // Window of "doing nothing" between idle micro-animations. We want
+  // the mascot to feel alive without being distracting — short enough
+  // that a user lingering on the page sees movement within a few
+  // seconds, long enough that it doesn't fight with their typing.
+  // Combined with multi-history variety this keeps repeats rare even
+  // when an idle pool is small.
+  private static readonly IDLE_MIN_MS = 2_500;
+  private static readonly IDLE_MAX_MS = 6_000;
   /** How many recent idle indices to remember when picking the next one. */
   private static readonly IDLE_HISTORY = 3;
 

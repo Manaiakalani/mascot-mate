@@ -25,7 +25,6 @@ const STYLE = `
     border-color: #c53030;
     box-shadow: 0 6px 20px rgba(197, 48, 48, 0.18);
   }
-  .balloon.error .tail { border-top-color: #fff5f5; filter: drop-shadow(0 1px 0 #c53030); }
   .balloon.error .text { color: #742a2a; }
   .sr-only {
     position: absolute;
@@ -57,14 +56,32 @@ const STYLE = `
   }
   .retry:hover { background: #9b2c2c; }
   .retry[hidden] { display: none; }
+  /* Speech-bubble tail. The balloon places itself either above the mascot
+     (tail pointing down) or below it (tail pointing up); data-tail picks
+     which CSS variant is active. */
   .tail {
     position: absolute;
     width: 0; height: 0;
     border-left: 8px solid transparent;
     border-right: 8px solid transparent;
+  }
+  .balloon[data-tail="down"] .tail {
     border-top: 10px solid #ffffcc;
-    bottom: -10px; left: 24px;
+    bottom: -10px;
     filter: drop-shadow(0 1px 0 #444);
+  }
+  .balloon[data-tail="up"] .tail {
+    border-bottom: 10px solid #ffffcc;
+    top: -10px;
+    filter: drop-shadow(0 -1px 0 #444);
+  }
+  .balloon.error[data-tail="down"] .tail {
+    border-top-color: #fff5f5;
+    filter: drop-shadow(0 1px 0 #c53030);
+  }
+  .balloon.error[data-tail="up"] .tail {
+    border-bottom-color: #fff5f5;
+    filter: drop-shadow(0 -1px 0 #c53030);
   }
   .row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
   .close {
@@ -105,6 +122,7 @@ export class Balloon {
     this.box.setAttribute('role', 'dialog');
     this.box.setAttribute('aria-modal', 'false');
     this.box.setAttribute('aria-label', 'Mascot assistant');
+    this.box.setAttribute('data-tail', 'down');
     this.box.innerHTML = `
       <div class="row">
         <div class="text" role="status" aria-live="polite" aria-atomic="false"></div>
@@ -220,24 +238,41 @@ export class Balloon {
     this.input.focus();
   }
 
-  /** Position bubble above-and-to-the-left of the given anchor rect. */
+  /** Position bubble above-and-to-the-left of the given anchor rect.
+   *  Falls back to placing it below the mascot when there's not enough
+   *  headroom; the tail flips accordingly so it always points at the
+   *  mascot. The bubble shifts horizontally so its tail can reach the
+   *  mascot's centre, keeping the visual link between the two clear. */
   positionAbove(anchor: DOMRect): void {
-    // measure box (must be visible to measure)
     const wasHidden = !this.isVisible();
     if (wasHidden) {
       this.box.style.visibility = 'hidden';
       this.box.classList.add('show');
     }
     const r = this.box.getBoundingClientRect();
+    const anchorCenterX = anchor.left + anchor.width / 2;
+    // Default placement: bubble's right edge ~30px past the mascot's
+    // centre so the tail naturally points down-right at the mascot.
+    let left = anchorCenterX - (r.width - 30);
     let top = anchor.top - r.height - 14;
-    let left = anchor.left - r.width + 60;
-    if (top < 8) top = anchor.bottom + 14;
+    let tail: 'up' | 'down' = 'down';
+    if (top < 8) {
+      top = anchor.bottom + 14;
+      tail = 'up';
+    }
+    // Viewport clamp.
     if (left < 8) left = 8;
     if (left + r.width > window.innerWidth - 8) {
       left = window.innerWidth - r.width - 8;
     }
     this.box.style.top = `${top}px`;
     this.box.style.left = `${left}px`;
+    this.box.setAttribute('data-tail', tail);
+    // Aim the tail at the mascot's horizontal centre, clamped to the
+    // bubble's interior so it never floats off the edge.
+    const tailX = Math.max(14, Math.min(r.width - 22, anchorCenterX - left - 8));
+    const tailEl = this.box.querySelector<HTMLElement>('.tail');
+    if (tailEl) tailEl.style.left = `${tailX}px`;
     if (wasHidden) {
       this.box.classList.remove('show');
       this.box.style.visibility = '';

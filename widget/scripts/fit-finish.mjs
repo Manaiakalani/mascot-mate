@@ -90,7 +90,7 @@ const mascot1 = await p.evaluate(() => {
 check('Clippy at 115px height', mascot1?.h === 115, `actual h=${mascot1?.h}`);
 
 // 3) Swap to Ninjacat
-await clickShadow('.swap');
+await p.evaluate(() => window.Mascot.switchTo('ninjacat'));
 await p.waitForTimeout(2400);
 await closeBubble();
 await snap('02-after-swap-ninjacat');
@@ -112,7 +112,7 @@ const ninjaPill = await rect('.pill');
 const tailX = await shadowEval('.pill', (el) => parseFloat(el.style.getPropertyValue('--tail-x')));
 check('Pill not hidden after swap', ninjaPill && !ninjaPill.hidden);
 const ninjaTooltip = await shadowEval('.swap', (el) => el.title);
-check('Tooltip says "Switch to Bob"', ninjaTooltip === 'Switch to Bob', ninjaTooltip);
+check('Swap chip has picker tooltip', ninjaTooltip === 'Choose mascot', ninjaTooltip);
 
 // 5) Topmost-z & clickability of pill after swap
 const isTop = await p.evaluate(() => {
@@ -160,12 +160,12 @@ check('Ninjacat greeting in bubble', bubbleText && bubbleText.toLowerCase().incl
 // 9) Close + swap forward to Bob, then back to Clippy
 await closeBubble();
 await p.waitForTimeout(500);
-await clickShadow('.swap');           // ninjacat -> bob
+await p.evaluate(() => window.Mascot.switchTo('bob'));
 await p.waitForTimeout(2400);
 await closeBubble();
 await snap('04-bob');
 const bobTooltip = await shadowEval('.swap', (el) => el.title);
-check('Tooltip says "Switch to Clippy" after Bob', bobTooltip === 'Switch to Clippy', bobTooltip);
+check('Swap chip tooltip stays "Choose mascot"', bobTooltip === 'Choose mascot', bobTooltip);
 const bobPillLabel = await shadowEval('.ask .label', (el) => el.textContent.trim());
 check('Bob pill label is "Hi! I\'m Bob"', bobPillLabel === "Hi! I'm Bob", bobPillLabel);
 const bobMascot = await p.evaluate(() => {
@@ -175,12 +175,21 @@ const bobMascot = await p.evaluate(() => {
   return root ? root.getBoundingClientRect().height : null;
 });
 check('Bob at 132px height', bobMascot === 132, `actual h=${bobMascot}`);
-await clickShadow('.swap');           // bob -> clippy
+// Picker shows all three mascots (Clippy + Ninja Cat + Bob)
+const pickerCount = await p.evaluate(() => {
+  for (const host of document.body.children) {
+    const items = host.shadowRoot?.querySelectorAll?.('.picker-item');
+    if (items && items.length) return items.length;
+  }
+  return 0;
+});
+check('Picker exposes all three mascots', pickerCount === 3, `picker-item count=${pickerCount}`);
+await p.evaluate(() => window.Mascot.switchTo('clippy'));
 await p.waitForTimeout(2400);
 await closeBubble();
 await snap('05-back-to-clippy');
 const backTooltip = await shadowEval('.swap', (el) => el.title);
-check('Tooltip back to "Switch to Ninja Cat"', backTooltip === 'Switch to Ninja Cat', backTooltip);
+check('Tooltip stays "Choose mascot" after returning to Clippy', backTooltip === 'Choose mascot', backTooltip);
 
 // 10) Keyboard: '/' opens bubble
 await p.keyboard.press('/');
@@ -205,7 +214,7 @@ await p.evaluate(() => {
     root.style.bottom = '20px';
   }
 });
-await clickShadow('.swap');  // trigger reposition by switching
+await p.evaluate(() => window.Mascot.switchTo('ninjacat'));  // trigger reposition by switching
 await p.waitForTimeout(2400);
 await closeBubble();
 const edgePill = await rect('.pill');
@@ -227,9 +236,9 @@ await p.evaluate(() => {
 });
 // trigger reposition via window resize event
 await p.evaluate(() => window.dispatchEvent(new Event('resize')));
-// also nudge by clicking swap+swap to force pill repositioning
-await clickShadow('.swap'); await p.waitForTimeout(2400); await closeBubble();
-await clickShadow('.swap'); await p.waitForTimeout(2400); await closeBubble();
+// also nudge by switching twice to force pill repositioning
+await p.evaluate(() => window.Mascot.switchTo('ninjacat')); await p.waitForTimeout(2400); await closeBubble();
+await p.evaluate(() => window.Mascot.switchTo('clippy')); await p.waitForTimeout(2400); await closeBubble();
 const topTail = await shadowEval('.pill', (el) => el.getAttribute('data-tail'));
 const topPill = await rect('.pill');
 check('Pill stays inside viewport (top edge)', topPill && topPill.y >= -1, `y=${topPill?.y?.toFixed(1)}`);

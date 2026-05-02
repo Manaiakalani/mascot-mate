@@ -45,6 +45,16 @@ def remove_white_bg(im: Image.Image) -> Image.Image:
     dark_a = np.clip((90.0 - brightness) / 50.0, 0.0, 1.0)
     dark_a = dark_a * dark_a * (3.0 - 2.0 * dark_a)
     a = np.maximum(sat_a, dark_a)
+    # Aggressively kill the mid-tone grey halo left by the source shadow.
+    # Anything that is low-saturation AND not already nearly-opaque-dark gets
+    # forced to zero alpha. This removes the visible grey ring that was
+    # leaking around Bob's body while preserving black outlines (bright<40)
+    # and yellow body (chroma>=24).
+    grey_halo = (chroma < 24.0) & (brightness > 40.0)
+    a = np.where(grey_halo, 0.0, a)
+    # Also fully clamp anything below a very small alpha to zero (prevents
+    # 1-2 alpha "dust" from appearing when the sheet is upscaled).
+    a = np.where(a < 0.06, 0.0, a)
     alpha = (a * 255.0).astype(np.uint8)
     # Un-premultiply against white bg: true = (obs - 255*(1-a)) / a
     a3 = a[..., None]
