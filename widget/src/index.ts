@@ -203,12 +203,11 @@ class MascotImpl implements MascotInstance {
     this.pill = new AskPill({
       label: 'Ask me anything…',
       onClick: () => this.openBubble(),
+      // Cycle through registered mascots one click at a time. The
+      // picker popover (passing mascots/onPick) was tried but felt
+      // like overkill for ≤4 mascots; a plain rotator is simpler and
+      // matches users' expectation of "click the chip to swap".
       onSwap: () => void this.swapToNextMascot(),
-      mascots: this.buildMascotOptions(),
-      currentId: this.manifest.id,
-      onPick: (id) => {
-        if (id !== this.manifest.id) void this.switchTo(id);
-      },
       theme: this.manifest.theme,
       swapTooltip: this.computeSwapTooltip(),
     });
@@ -600,18 +599,14 @@ class MascotImpl implements MascotInstance {
     }));
   }
 
-  /** Tooltip for the swap glyph. With a picker popover the chip opens a
-   *  menu of every mascot; without one (1 mascot, or 2 with no onPick) it
-   *  cycles to the named "next" mascot. The label reflects each mode. */
+  /** Tooltip for the swap glyph. With ≥2 mascots it always names the
+   *  next one in the cycle ("Switch to Ninja Cat"). */
   private computeSwapTooltip(): string {
     const all = listMascots();
     if (all.length < 2) return 'Switch mascot';
-    if (all.length === 2) {
-      const idx = all.indexOf(this.manifest.id);
-      const nextId = all[(idx + 1) % all.length]!;
-      return `Switch to ${getMascotName(nextId)}`;
-    }
-    return 'Choose mascot';
+    const idx = all.indexOf(this.manifest.id);
+    const nextId = all[(idx + 1) % all.length]!;
+    return `Switch to ${getMascotName(nextId)}`;
   }
 
   // ---------- Idle scheduler ----------

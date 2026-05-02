@@ -112,7 +112,7 @@ const ninjaPill = await rect('.pill');
 const tailX = await shadowEval('.pill', (el) => parseFloat(el.style.getPropertyValue('--tail-x')));
 check('Pill not hidden after swap', ninjaPill && !ninjaPill.hidden);
 const ninjaTooltip = await shadowEval('.swap', (el) => el.title);
-check('Swap chip has picker tooltip', ninjaTooltip === 'Choose mascot', ninjaTooltip);
+check('Swap chip names next mascot in cycle', ninjaTooltip === 'Switch to Bob', ninjaTooltip);
 
 // 5) Topmost-z & clickability of pill after swap
 const isTop = await p.evaluate(() => {
@@ -165,7 +165,7 @@ await p.waitForTimeout(2400);
 await closeBubble();
 await snap('04-bob');
 const bobTooltip = await shadowEval('.swap', (el) => el.title);
-check('Swap chip tooltip stays "Choose mascot"', bobTooltip === 'Choose mascot', bobTooltip);
+check('Swap chip names next mascot after Bob', bobTooltip === 'Switch to Clippy', bobTooltip);
 const bobPillLabel = await shadowEval('.ask .placeholder', (el) => el.textContent.trim());
 check('Pill placeholder is "Ask me anything…"', bobPillLabel === "Ask me anything…", bobPillLabel);
 const bobMascot = await p.evaluate(() => {
@@ -175,21 +175,18 @@ const bobMascot = await p.evaluate(() => {
   return root ? root.getBoundingClientRect().height : null;
 });
 check('Bob at 110px height', bobMascot === 110, `actual h=${bobMascot}`);
-// Picker shows all three mascots (Clippy + Ninja Cat + Bob)
-const pickerCount = await p.evaluate(() => {
-  for (const host of document.body.children) {
-    const items = host.shadowRoot?.querySelectorAll?.('.picker-item');
-    if (items && items.length) return items.length;
-  }
-  return 0;
-});
-check('Picker exposes all three mascots', pickerCount === 3, `picker-item count=${pickerCount}`);
+// Cycle behaviour: clicking the swap chip moves to the next mascot.
+await clickShadow('.swap');
+await p.waitForTimeout(2400);
+await closeBubble();
+const afterCycle = await p.evaluate(() => window.Mascot.current());
+check('Swap chip cycles forward (bob → clippy)', afterCycle === 'clippy', afterCycle);
 await p.evaluate(() => window.Mascot.switchTo('clippy'));
 await p.waitForTimeout(2400);
 await closeBubble();
 await snap('05-back-to-clippy');
 const backTooltip = await shadowEval('.swap', (el) => el.title);
-check('Tooltip stays "Choose mascot" after returning to Clippy', backTooltip === 'Choose mascot', backTooltip);
+check('Tooltip names next-after-Clippy', backTooltip === 'Switch to Ninja Cat', backTooltip);
 
 // 10) Keyboard: '/' opens bubble
 await p.keyboard.press('/');
