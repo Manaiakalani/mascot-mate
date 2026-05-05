@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Mascot Mate — demo</title>
+    <style>
+      body { font: 14px/1.5 system-ui, -apple-system, Segoe UI, sans-serif; max-width: 720px; margin: 40px auto; padding: 0 16px; color: #222; }
+      h1 { font-size: 22px; }
+      .controls { display: flex; gap: 8px; margin: 16px 0; flex-wrap: wrap; }
+      button { padding: 6px 12px; border: 1px solid #888; border-radius: 4px; background: #f4f4f4; cursor: pointer; }
+      button:hover { background: #eaeaea; }
+      code { background: #f4f4f4; padding: 1px 4px; border-radius: 3px; }
+      .status { padding: 8px 12px; border-radius: 4px; background: #fff8d8; border: 1px solid #d8c870; font-size: 12px; }
+      .note { font-size: 12px; color: #555; margin-top: 24px; }
+    </style>
+  </head>
+  <body>
+    <h1>Mascot Mate — GitHub Pages demo</h1>
+    <p>Click the mascot, type a question, hit <code>Ask</code>. Use the buttons below to switch.</p>
+    <div class="controls">
+      <button id="clippy">Switch to Clippy</button>
+      <button id="ninjacat">Switch to Ninjacat</button>
+      <button id="bob">Switch to Bob</button>
+      <button id="hide">Hide</button>
+      <button id="show">Show</button>
+      <button id="wave">Play Greeting</button>
+    </div>
+    <div class="status" id="status">Booting widget…</div>
+    <p class="note">
+      The chat endpoint is not deployed with the static demo, so asking questions
+      will fail unless you point it at your own running server. See the
+      <a href="https://github.com/Manaiakalani/mascot-mate">repository README</a>
+      for how to run the server locally.
+    </p>
+
+    <script type="module">
+      import { init } from './mascot.js';
+      const status = document.getElementById('status');
+      try {
+        const m = await init({
+          // No public endpoint is deployed for the static Pages demo.
+          // Override at runtime via window.Mascot if you have one running.
+          endpoint: 'http://localhost:8787/api/ask',
+          mascot: 'clippy',
+        });
+        window.Mascot = m;
+        status.textContent = `Loaded mascots: ${m.available().join(', ')}. Current: ${m.current()}.`;
+        document.getElementById('clippy').onclick = () => m.switchTo('clippy');
+        document.getElementById('ninjacat').onclick = () =>
+          m.switchTo('ninjacat').catch((e) => alert(e.message));
+        document.getElementById('bob').onclick = () =>
+          m.switchTo('bob').catch((e) => alert(e.message));
+        document.getElementById('hide').onclick = () => m.hide();
+        document.getElementById('show').onclick = () => m.show();
+        document.getElementById('wave').onclick = () => m.show();
+      } catch (e) {
+        status.textContent = `Error: ${e.message}`;
+        console.error(e);
+      }
+    </script>
+  </body>
+</html>
