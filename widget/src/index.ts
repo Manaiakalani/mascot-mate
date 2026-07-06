@@ -471,7 +471,8 @@ class MascotImpl implements MascotInstance {
   async ask(q: string): Promise<string> {
     this.cancelIdle();
     this.inflight?.abort();
-    this.inflight = new AbortController();
+    const controller = new AbortController();
+    this.inflight = controller;
     this.lastQuestion = q;
 
     this.balloon.show();
@@ -482,7 +483,11 @@ class MascotImpl implements MascotInstance {
     if (this.manifest.thinking && this.queue.hasAnimation(this.manifest.thinking)) {
       this.queue.play(this.manifest.thinking);
     }
-    this.history.push({ role: 'user', content: q });
+    // Keep a direct reference to the turn *this* call pushed so cleanup can
+    // remove exactly this entry later, even if a newer overlapping ask() has
+    // since pushed its own turn onto the same history array.
+    const turn: ChatMessage = { role: 'user', content: q };
+    this.history.push(turn);
 
     let firstToken = true;
     // Streamed tokens can arrive many times per frame; batch reposition calls
@@ -501,7 +506,7 @@ class MascotImpl implements MascotInstance {
       const reply = await askStreaming({
         endpoint: this.opts.endpoint,
         messages: this.history,
-        signal: this.inflight.signal,
+        signal: controller.signal,
         onToken: (delta) => {
           if (firstToken) {
             firstToken = false;
@@ -519,12 +524,19 @@ class MascotImpl implements MascotInstance {
       this.history.push({ role: 'assistant', content: reply });
       return reply;
     } catch (e) {
-      this.handleAskError(e);
+      // A newer overlapping ask() reassigns this.inflight before this one's
+      // catch/finally runs, so comparing against the locally-captured
+      // controller tells us whether we're still the active request — an
+      // aborted/failed *older* request must not clobber the newer one's
+      // bubble state (busy flag, inflight handle, error text).
+      this.handleAskError(e, turn, this.inflight === controller);
       throw e;
     } finally {
-      this.balloon.setBusy(false);
-      this.inflight = null;
-      this.scheduleIdleAfterCurrent();
+      if (this.inflight === controller) {
+        this.balloon.setBusy(false);
+        this.inflight = null;
+        this.scheduleIdleAfterCurrent();
+      }
     }
   }
 
@@ -533,21 +545,22 @@ class MascotImpl implements MascotInstance {
    * everything else picks a friendly mascot-flavored message and (when
    * recoverable) a Try-again button. Plays an Alert/Oops anim if the mascot
    * has one defined.
+   *
+   * `turn` is the exact history entry this ask() call pushed; it's removed
+   * by reference (not "pop the last entry") so this can't delete a newer
+   * overlapping request's just-pushed message. `isCurrent` is false once a
+   * newer ask() has superseded this one — in that case the newer request
+   * owns the bubble, so only history cleanup happens here.
    */
-  private handleAskError(e: unknown): void {
+  private handleAskError(e: unknown, turn: ChatMessage, isCurrent: boolean): void {
+    const idx = this.history.indexOf(turn);
+    if (idx !== -1) this.history.splice(idx, 1);
+    if (!isCurrent) return;
     const err = e instanceof MascotError ? e : null;
     if (err && err.kind === 'aborted') {
-      // User-initiated abort (e.g., a new ask) — drop the stale message we
-      // pushed onto history so the conversation stays clean.
-      if (this.history.length && this.history[this.history.length - 1]!.role === 'user') {
-        this.history.pop();
-      }
+      // User-initiated abort (e.g., a new ask or a mascot switch) — no error
+      // UI needed, whatever superseded this owns the bubble now.
       return;
-    }
-    // Drop the user message we optimistically pushed; the assistant never
-    // produced a reply, so leaving it would corrupt the next turn.
-    if (this.history.length && this.history[this.history.length - 1]!.role === 'user') {
-      this.history.pop();
     }
     const { text, retryable } = this.formatAskError(err, e);
     this.balloon.showError(text, { retryable });
@@ -598,6 +611,9 @@ class MascotImpl implements MascotInstance {
       throw new Error(`Unknown mascot "${id}".`);
     }
     this.cancelIdle();
+    // Cancel any in-flight ask so a late-arriving stream can't keep
+    // appending the old mascot's reply into the new mascot's bubble/greeting.
+    this.inflight?.abort();
     if (this.manifest.goodbye && !this.idleDisabled) {
       this.queue.play(this.manifest.goodbye);
       await new Promise((r) => setTimeout(r, 800));
