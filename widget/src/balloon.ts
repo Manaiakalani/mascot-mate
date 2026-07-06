@@ -221,6 +221,15 @@ export class Balloon {
     this.textEl.textContent = (this.textEl.textContent ?? '') + s;
   }
 
+  /**
+   * Toggles aria-busy on the dialog while awaiting the first streamed token,
+   * so assistive tech knows a response is pending rather than reading the
+   * bubble as silently empty.
+   */
+  setBusy(busy: boolean): void {
+    this.box.setAttribute('aria-busy', String(busy));
+  }
+
   /** Show a typed error: red accent + optional Try-again button. */
   showError(message: string, opts: { retryable?: boolean } = {}): void {
     this.box.classList.add('error');

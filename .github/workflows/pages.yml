@@ -37,6 +37,10 @@ jobs:
           cp widget/pages/index.html _site/index.html
           cp widget/dist/mascot.js _site/mascot.js
           cp widget/dist/mascot.iife.js _site/mascot.iife.js
+          # Sprite sheets are no longer inlined into the JS bundle (see
+          # widget/vite.config.ts); they must be copied alongside it as
+          # plain static files or mascots will fail to render on the demo.
+          cp -r widget/dist/mascots _site/mascots
           # Prevent Jekyll from interfering with files starting with underscores.
           touch _site/.nojekyll
 

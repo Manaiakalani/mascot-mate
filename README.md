@@ -59,7 +59,9 @@ Build the widget:
 cd widget && npm run build
 ```
 
-Host `widget/dist/mascot.iife.js` on any CDN, then drop one tag:
+Host the entire `widget/dist/` folder on any CDN (the sprite sheets live
+alongside the JS as `dist/mascots/{id}/map.png` and are fetched lazily at
+runtime — only the active mascot's sheet is downloaded), then drop one tag:
 
 ```html
 <script src="https://your-cdn.example/mascot.iife.js"

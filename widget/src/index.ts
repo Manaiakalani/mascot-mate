@@ -9,29 +9,35 @@ import type { MascotManifest, MascotMap } from './types.js';
 // Discover mascots at build time. Each mascot folder contributes a map.json
 // and a map.png; both are optional (a folder is registered only when both
 // files exist), so adding/removing a mascot is purely a filesystem change.
+//
+// Only map.json (small JSON) is bundled eagerly. The sprite PNG is NOT
+// imported through Vite's asset pipeline: library-mode builds always
+// base64-inline statically-imported assets regardless of size, which used to
+// bake all 3 mascots' sprite sheets into the JS bundle even though only one
+// is ever displayed at a time (~3MB of dead weight per page load). Instead,
+// the build copies raw PNGs next to the emitted JS (see vite.config.ts) and
+// this resolves each mascot's sprite as a plain sibling URL, so the browser's
+// native lazy image loading fetches only the sheet that's actually rendered.
 const mapModules = import.meta.glob<MascotMap>('./mascots/*/map.json', {
   eager: true,
   import: 'default',
 });
-const sheetModules = import.meta.glob<string>('./mascots/*/map.png', {
-  eager: true,
-  import: 'default',
-  query: '?url',
-});
+
+// Resolve sibling asset URLs relative to *this script's own location* so it
+// keeps working regardless of where the built file is hosted: `import.meta.url`
+// is the module's URL for ESM/dev, and Rollup shims it to
+// `document.currentScript.src` (falling back to the known output filename)
+// for the IIFE build, matching how auto-mount already relies on
+// `document.currentScript`.
+const ASSET_BASE = new URL(/* @vite-ignore */ './mascots/', import.meta.url).href;
 
 for (const path of Object.keys(mapModules)) {
   const id = path.split('/')[2]!;
-  const sheetPath = `./mascots/${id}/map.png`;
-  const sheet = sheetModules[sheetPath];
-  if (!sheet) {
-    console.warn(`[mascot] skipping "${id}": missing map.png`);
-    continue;
-  }
   registerMascot({
     id,
     name: id.charAt(0).toUpperCase() + id.slice(1),
     map: mapModules[path]!,
-    spritesheet: sheet,
+    spritesheet: `${ASSET_BASE}${id}/map.png`,
   });
 }
 
@@ -188,6 +194,7 @@ class MascotImpl implements MascotInstance {
       onHide: () => {
         this.pill.show();
         this.pill.setExpanded(false);
+        this.setBubbleExpanded(false);
         this.repositionPill();
         // Return focus to the pill's ask button so keyboard users land where
         // they came from rather than at <body>.
@@ -295,10 +302,23 @@ class MascotImpl implements MascotInstance {
         writeSavedPosition({ left, top, vw: window.innerWidth, vh: window.innerHeight });
       },
     });
-    // Keyboard activation: Enter / Space on the focused mascot opens the
-    // bubble (mirrors clicking the ask pill so keyboard users have parity).
+    // Keyboard activation: mirrors native <button> semantics so keyboard
+    // and screen-reader users get the same affordance as a real button.
+    // Enter activates on keydown; Space activates on keyup (preventing the
+    // keydown default so it doesn't scroll the page), matching how browsers
+    // treat role="button" elements — firing on Space-keydown would let a
+    // held/repeating key spam-open the bubble.
     this.renderer.el.addEventListener('keydown', (e) => {
-      if (e.key !== 'Enter' && e.key !== ' ') return;
+      if (e.key === ' ') {
+        e.preventDefault();
+        return;
+      }
+      if (e.key !== 'Enter') return;
+      e.preventDefault();
+      this.openBubble();
+    });
+    this.renderer.el.addEventListener('keyup', (e) => {
+      if (e.key !== ' ') return;
       e.preventDefault();
       this.openBubble();
     });
@@ -394,8 +414,14 @@ class MascotImpl implements MascotInstance {
     this.pill?.hide();
     this.pill?.setExpanded(true);
     this.balloon.show();
+    this.setBubbleExpanded(true);
     this.repositionBubble();
     this.balloon.focusInput();
+  }
+
+  /** Keeps aria-expanded on the mascot button in sync with the bubble. */
+  private setBubbleExpanded(expanded: boolean): void {
+    this.renderer.el.setAttribute('aria-expanded', String(expanded));
   }
 
   private repositionBubble(): void {
@@ -414,6 +440,7 @@ class MascotImpl implements MascotInstance {
   private toggleBubble(): void {
     if (this.balloon.isVisible()) {
       this.balloon.hide();
+      this.setBubbleExpanded(false);
       this.pill?.show();
       this.repositionPill();
     } else {
@@ -435,6 +462,7 @@ class MascotImpl implements MascotInstance {
       this.queue.play(this.manifest.goodbye);
     }
     this.balloon.hide();
+    this.setBubbleExpanded(false);
     // Wait briefly for goodbye to finish.
     await new Promise((r) => setTimeout(r, this.idleDisabled ? 0 : 600));
     this.renderer.hide();
@@ -447,7 +475,9 @@ class MascotImpl implements MascotInstance {
     this.lastQuestion = q;
 
     this.balloon.show();
-    this.balloon.setText('');
+    this.setBubbleExpanded(true);
+    this.balloon.setBusy(true);
+    this.balloon.setText('Thinking…');
     this.repositionBubble();
     if (this.manifest.thinking && this.queue.hasAnimation(this.manifest.thinking)) {
       this.queue.play(this.manifest.thinking);
@@ -455,6 +485,18 @@ class MascotImpl implements MascotInstance {
     this.history.push({ role: 'user', content: q });
 
     let firstToken = true;
+    // Streamed tokens can arrive many times per frame; batch reposition calls
+    // to at most once per animation frame instead of once per token so a fast
+    // stream doesn't force a layout/reflow on every delta.
+    let repositionQueued = false;
+    const scheduleReposition = (): void => {
+      if (repositionQueued) return;
+      repositionQueued = true;
+      requestAnimationFrame(() => {
+        repositionQueued = false;
+        this.repositionBubble();
+      });
+    };
     try {
       const reply = await askStreaming({
         endpoint: this.opts.endpoint,
@@ -463,13 +505,15 @@ class MascotImpl implements MascotInstance {
         onToken: (delta) => {
           if (firstToken) {
             firstToken = false;
+            this.balloon.setBusy(false);
+            this.balloon.setText('');
             if (this.manifest.speaking && this.queue.hasAnimation(this.manifest.speaking)) {
               this.queue.stop();
               this.queue.play(this.manifest.speaking);
             }
           }
           this.balloon.appendText(delta);
-          this.repositionBubble();
+          scheduleReposition();
         },
       });
       this.history.push({ role: 'assistant', content: reply });
@@ -478,6 +522,7 @@ class MascotImpl implements MascotInstance {
       this.handleAskError(e);
       throw e;
     } finally {
+      this.balloon.setBusy(false);
       this.inflight = null;
       this.scheduleIdleAfterCurrent();
     }
@@ -722,10 +767,16 @@ function autoMount(): void {
   const mascot = script.dataset.mascot;
   const greeting = script.dataset.greeting;
   const systemPrompt = script.dataset.system;
-  void init({ endpoint, mascot, greeting, systemPrompt }).then((inst) => {
-    // expose for console / programmatic use
-    (window as unknown as { Mascot: MascotInstance }).Mascot = inst;
-  });
+  void init({ endpoint, mascot, greeting, systemPrompt })
+    .then((inst) => {
+      // expose for console / programmatic use
+      (window as unknown as { Mascot: MascotInstance }).Mascot = inst;
+    })
+    .catch((err) => {
+      // Auto-mount has no caller to report failures to; log instead of
+      // letting init() rejections become a silent unhandled rejection.
+      console.error('[mascot] auto-mount failed:', err);
+    });
 }
 
 // In IIFE builds, document.currentScript exists at parse time.

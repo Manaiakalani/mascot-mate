@@ -52,8 +52,7 @@ function setCors(req: IncomingMessage, res: ServerResponse): boolean {
   const origin = req.headers.origin as string | undefined;
   const allowed = originAllowed(origin);
   if (origin && !allowed) {
-    res.statusCode = 403;
-    res.end('origin not allowed');
+    sendJsonError(res, 403, 'origin not allowed', 'forbidden');
     return false;
   }
   if (allowed) res.setHeader('access-control-allow-origin', allowed);
@@ -61,6 +60,26 @@ function setCors(req: IncomingMessage, res: ServerResponse): boolean {
   res.setHeader('access-control-allow-methods', 'POST, OPTIONS');
   res.setHeader('access-control-allow-headers', 'content-type');
   return true;
+}
+
+/**
+ * Every error response — CORS rejection, 404, rate limit, missing config,
+ * bad request — uses this single `{ error, kind }` JSON envelope so the
+ * widget never has to guess whether a body is plain text or JSON.
+ */
+function sendJsonError(
+  res: ServerResponse,
+  status: number,
+  error: string,
+  kind: string,
+  headers?: Record<string, string>,
+): void {
+  res.statusCode = status;
+  res.setHeader('content-type', 'application/json');
+  if (headers) {
+    for (const [name, value] of Object.entries(headers)) res.setHeader(name, value);
+  }
+  res.end(JSON.stringify({ error, kind }));
 }
 
 function clientIp(req: IncomingMessage): string {
@@ -139,28 +158,22 @@ const server = createServer(async (req, res) => {
   }
 
   if (req.method !== 'POST' || req.url !== '/api/ask') {
-    res.statusCode = 404;
-    res.end('not found');
+    sendJsonError(res, 404, 'not found', 'not_found');
     return;
   }
 
   const ip = clientIp(req);
   if (!limiter.take(ip)) {
-    res.statusCode = 429;
-    res.setHeader('retry-after', '5');
-    res.setHeader('content-type', 'application/json');
-    res.end(JSON.stringify({ error: 'rate limit exceeded', kind: 'rate_limit' }));
+    sendJsonError(res, 429, 'rate limit exceeded', 'rate_limit', { 'retry-after': '5' });
     return;
   }
 
   if (!KEY) {
-    res.statusCode = 503;
-    res.setHeader('content-type', 'application/json');
-    res.end(
-      JSON.stringify({
-        error: 'server is missing OPENAI_API_KEY — the assistant is not configured',
-        kind: 'unauthorized',
-      }),
+    sendJsonError(
+      res,
+      503,
+      'server is missing OPENAI_API_KEY — the assistant is not configured',
+      'unauthorized',
     );
     return;
   }
@@ -171,9 +184,7 @@ const server = createServer(async (req, res) => {
     const parsed = JSON.parse(body) as { messages?: unknown };
     messages = validateMessages(parsed.messages);
   } catch (e) {
-    res.statusCode = 400;
-    res.setHeader('content-type', 'application/json');
-    res.end(JSON.stringify({ error: (e as Error).message, kind: 'bad_request' }));
+    sendJsonError(res, 400, (e as Error).message, 'bad_request');
     return;
   }
 
