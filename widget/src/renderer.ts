@@ -32,6 +32,8 @@ export class SpriteRenderer implements RendererPort {
     root.className = 'mascot-agent';
     root.setAttribute('role', 'button');
     root.setAttribute('aria-label', 'Open assistant');
+    root.setAttribute('aria-haspopup', 'dialog');
+    root.setAttribute('aria-expanded', 'false');
     root.tabIndex = 0;
     Object.assign(root.style, {
       position: 'fixed',

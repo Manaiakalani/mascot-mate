@@ -4,6 +4,7 @@
   "type": "module",
   "main": "./dist/mascot.js",
   "module": "./dist/mascot.js",
+  "types": "./dist/types/index.d.ts",
   "files": [
     "dist",
     "src/mascots"

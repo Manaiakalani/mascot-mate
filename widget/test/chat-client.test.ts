@@ -82,6 +82,28 @@ describe('chat-client error classification', () => {
     });
   });
 
+  it('extracts the friendly message from a JSON error body instead of leaking raw JSON', async () => {
+    const fetchImpl = (async () =>
+      new Response(JSON.stringify({ error: 'messages[0].content invalid', kind: 'bad_request' }), {
+        status: 400,
+      })) as unknown as typeof fetch;
+    await withFetch(fetchImpl, async () => {
+      try {
+        await askStreaming({
+          endpoint: '/x',
+          messages: [{ role: 'user', content: 'hi' }],
+          onToken: () => {},
+        });
+        expect.fail('expected throw');
+      } catch (e) {
+        const err = e as MascotError;
+        expect(err.kind).toBe('bad_request');
+        expect(err.message).toBe('messages[0].content invalid');
+        expect(err.message).not.toContain('{');
+      }
+    });
+  });
+
   it('classifies fetch TypeError as network', async () => {
     const fetchImpl = (async () => {
       throw new TypeError('Failed to fetch');

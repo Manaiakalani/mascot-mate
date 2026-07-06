@@ -67,9 +67,28 @@ function parseRetryAfter(raw: string | null): number | undefined {
   return undefined;
 }
 
-function classifyHttp(status: number, body: string): MascotError {
+/**
+ * The server always sends errors as `{ error, kind }` JSON (see
+ * server.ts's sendJsonError), but callers here shouldn't crash or leak raw
+ * JSON syntax into the UI for a non-JSON or malformed body — so this falls
+ * back to the raw text whenever parsing doesn't yield a usable message.
+ */
+function extractErrorMessage(body: string): string {
   const trimmed = body.trim();
-  const text = trimmed || `HTTP ${status}`;
+  if (trimmed.startsWith('{')) {
+    try {
+      const parsed = JSON.parse(trimmed) as { error?: unknown };
+      if (typeof parsed.error === 'string' && parsed.error) return parsed.error;
+    } catch {
+      // Not valid JSON — fall through to the raw text below.
+    }
+  }
+  return trimmed;
+}
+
+function classifyHttp(status: number, body: string): MascotError {
+  const message = extractErrorMessage(body);
+  const text = message || `HTTP ${status}`;
   if (status === 401 || status === 403) {
     return new MascotError('unauthorized', text, { status });
   }
@@ -79,7 +98,7 @@ function classifyHttp(status: number, body: string): MascotError {
   if (status === 400 || status === 413 || status === 422) {
     return new MascotError('bad_request', text, { status });
   }
-  if (status === 503 && /key|api[_ -]key|missing|configur/i.test(trimmed)) {
+  if (status === 503 && /key|api[_ -]key|missing|configur/i.test(message)) {
     return new MascotError('unauthorized', text, { status });
   }
   if (status >= 500) {
