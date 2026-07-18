@@ -212,6 +212,7 @@ export class Balloon {
    */
   setBusy(busy: boolean): void {
     this.box.setAttribute('aria-busy', String(busy));
+    if (busy) this.liveEl.textContent = '';
   }
 
   /**
@@ -227,6 +228,7 @@ export class Balloon {
     this.box.classList.add('error');
     this.textEl.textContent = message;
     this.retryBtn.hidden = !opts.retryable;
+    this.liveEl.textContent = message;
     this.show();
   }
 

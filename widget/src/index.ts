@@ -180,11 +180,12 @@ class MascotImpl implements MascotInstance {
     if (typeof window !== 'undefined' && window.matchMedia) {
       const mq = window.matchMedia('(prefers-reduced-motion: reduce)');
       this.idleDisabled = mq.matches;
-      mq.addEventListener?.('change', (e) => {
+      const onMotionChange = (e: MediaQueryListEvent) => {
         this.idleDisabled = e.matches;
         if (e.matches) this.cancelIdle();
         else this.scheduleIdle();
-      });
+      };
+      mq.addEventListener?.('change', onMotionChange, { signal: this.lifecycleAc.signal });
     }
     const id =
       this.opts.mascot ?? localStorage.getItem(STORAGE_KEY) ?? 'clippy';

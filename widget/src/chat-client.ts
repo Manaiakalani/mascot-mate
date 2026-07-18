@@ -73,13 +73,20 @@ function parseRetryAfter(raw: string | null): number | undefined {
  * JSON syntax into the UI for a non-JSON or malformed body — so this falls
  * back to the raw text whenever parsing doesn't yield a usable message.
  */
+const KNOWN_KINDS = new Set<MascotErrorKind>([
+  'rate_limit', 'unauthorized', 'network', 'timeout', 'aborted',
+  'bad_request', 'server', 'unknown',
+]);
+
 function extractErrorInfo(body: string): { message: string; kind?: MascotErrorKind } {
   const trimmed = body.trim();
   if (trimmed.startsWith('{')) {
     try {
       const parsed = JSON.parse(trimmed) as { error?: unknown; kind?: unknown };
       const message = typeof parsed.error === 'string' && parsed.error ? parsed.error : trimmed;
-      const kind = typeof parsed.kind === 'string' ? (parsed.kind as MascotErrorKind) : undefined;
+      const rawKind = typeof parsed.kind === 'string' ? parsed.kind : undefined;
+      const kind = rawKind && KNOWN_KINDS.has(rawKind as MascotErrorKind)
+        ? (rawKind as MascotErrorKind) : undefined;
       return { message, kind };
     } catch {
       // Not valid JSON — fall through to the raw text below.
