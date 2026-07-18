@@ -73,22 +73,29 @@ function parseRetryAfter(raw: string | null): number | undefined {
  * JSON syntax into the UI for a non-JSON or malformed body — so this falls
  * back to the raw text whenever parsing doesn't yield a usable message.
  */
-function extractErrorMessage(body: string): string {
+function extractErrorInfo(body: string): { message: string; kind?: MascotErrorKind } {
   const trimmed = body.trim();
   if (trimmed.startsWith('{')) {
     try {
-      const parsed = JSON.parse(trimmed) as { error?: unknown };
-      if (typeof parsed.error === 'string' && parsed.error) return parsed.error;
+      const parsed = JSON.parse(trimmed) as { error?: unknown; kind?: unknown };
+      const message = typeof parsed.error === 'string' && parsed.error ? parsed.error : trimmed;
+      const kind = typeof parsed.kind === 'string' ? (parsed.kind as MascotErrorKind) : undefined;
+      return { message, kind };
     } catch {
       // Not valid JSON — fall through to the raw text below.
     }
   }
-  return trimmed;
+  return { message: trimmed };
 }
 
 function classifyHttp(status: number, body: string): MascotError {
-  const message = extractErrorMessage(body);
+  const { message, kind: serverKind } = extractErrorInfo(body);
   const text = message || `HTTP ${status}`;
+  // Prefer the server's own error kind when available; fall back to
+  // status-code heuristics only when the server didn't classify.
+  if (serverKind) {
+    return new MascotError(serverKind, text, { status });
+  }
   if (status === 401 || status === 403) {
     return new MascotError('unauthorized', text, { status });
   }

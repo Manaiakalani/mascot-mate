@@ -32,7 +32,9 @@ const ALLOWED = (process.env.ALLOWED_ORIGINS ?? '*')
   .map((s) => s.trim())
   .filter(Boolean);
 const RPM = Number(process.env.RATE_LIMIT_RPM ?? 20);
+const TRUST_PROXY = process.env.TRUST_PROXY === 'true';
 const MAX_BODY = 32 * 1024;
+const BODY_TIMEOUT_MS = 10_000;
 const MAX_MESSAGES = 40;
 const MAX_CONTENT = 4000;
 
@@ -44,7 +46,7 @@ const limiter = new TokenBucket(RPM, RPM / 60);
 
 function originAllowed(origin: string | undefined): string | null {
   if (!origin) return null;
-  if (ALLOWED.includes('*')) return origin;
+  if (ALLOWED.includes('*')) return '*';
   return ALLOWED.includes(origin) ? origin : null;
 }
 
@@ -59,6 +61,7 @@ function setCors(req: IncomingMessage, res: ServerResponse): boolean {
   res.setHeader('vary', 'origin');
   res.setHeader('access-control-allow-methods', 'POST, OPTIONS');
   res.setHeader('access-control-allow-headers', 'content-type');
+  res.setHeader('access-control-max-age', '86400');
   return true;
 }
 
@@ -83,25 +86,49 @@ function sendJsonError(
 }
 
 function clientIp(req: IncomingMessage): string {
-  const fwd = (req.headers['x-forwarded-for'] as string | undefined)?.split(',')[0]?.trim();
-  return fwd || req.socket.remoteAddress || 'unknown';
+  if (TRUST_PROXY) {
+    const fwd = (req.headers['x-forwarded-for'] as string | undefined)?.split(',')[0]?.trim();
+    if (fwd) return fwd;
+  }
+  return req.socket.remoteAddress || 'unknown';
 }
 
 async function readBody(req: IncomingMessage): Promise<string> {
   return new Promise((resolve, reject) => {
     let total = 0;
+    let settled = false;
     const chunks: Buffer[] = [];
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      reject(new Error('request body timeout'));
+      req.destroy();
+    }, BODY_TIMEOUT_MS);
     req.on('data', (c: Buffer) => {
       total += c.length;
       if (total > MAX_BODY) {
-        reject(new Error('payload too large'));
+        if (!settled) {
+          settled = true;
+          clearTimeout(timer);
+          reject(new Error('payload too large'));
+        }
         req.destroy();
         return;
       }
       chunks.push(c);
     });
-    req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
-    req.on('error', reject);
+    req.on('end', () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(Buffer.concat(chunks).toString('utf8'));
+    });
+    req.on('error', (e) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      reject(e);
+    });
   });
 }
 
@@ -199,6 +226,9 @@ const server = createServer(async (req, res) => {
     }
     sseDone(res);
   } catch (e) {
+    // If the client already disconnected, don't attempt to write to the
+    // destroyed socket — it's pointless and would throw.
+    if (ac.signal.aborted) return;
     const msg = (e as Error).message || 'upstream error';
     // Best-effort classification of upstream failures for the client.
     let kind: 'unauthorized' | 'rate_limit' | 'server' = 'server';
