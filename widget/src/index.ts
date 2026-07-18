@@ -165,10 +165,12 @@ class MascotImpl implements MascotInstance {
   private idleTimer: ReturnType<typeof setTimeout> | null = null;
   /** Indices of the last few idles played, used to avoid repeats. */
   private idleHistory: number[] = [];
-  /** Legacy field kept so the rest of the file's references compile cleanly. */
-  private idleLastIdx = -1;
   /** Disable idle activity entirely. Set when destroyed or on prefers-reduced-motion. */
   private idleDisabled = false;
+  /** Abort controller for tearing down all global listeners in destroy(). */
+  private lifecycleAc = new AbortController();
+  /** Cleanup function returned by makeInteractive(). */
+  private cleanupInteractive: (() => void) | null = null;
 
   constructor(private opts: MascotInitOptions) {}
 
@@ -222,6 +224,8 @@ class MascotImpl implements MascotInstance {
 
     this.history.push({ role: 'system', content: this.opts.systemPrompt ?? SYS_DEFAULT });
 
+    const lsig = { signal: this.lifecycleAc.signal };
+
     // Keyboard shortcut: "/" focuses the input (unless already typing somewhere).
     window.addEventListener('keydown', (e) => {
       if (e.key !== '/' || e.metaKey || e.ctrlKey || e.altKey) return;
@@ -229,7 +233,7 @@ class MascotImpl implements MascotInstance {
       if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
       e.preventDefault();
       this.openBubble();
-    });
+    }, lsig);
 
     window.addEventListener('resize', () => {
       if (readSavedPosition()) {
@@ -244,8 +248,7 @@ class MascotImpl implements MascotInstance {
         this.renderer.setPosition(left, top);
       }
       this.repositionAll();
-    });
-    // Mobile rotation / iOS soft-keyboard show-hide doesn't always fire a
+    }, lsig);
     // resize event — listen on visualViewport too so the bottom-right
     // anchor follows the visible area.
     if (typeof visualViewport !== 'undefined' && visualViewport) {
@@ -257,18 +260,19 @@ class MascotImpl implements MascotInstance {
           this.repositionAll();
         }
       };
-      visualViewport.addEventListener('resize', onVV);
-      visualViewport.addEventListener('scroll', onVV);
+      visualViewport.addEventListener('resize', onVV, lsig);
+      visualViewport.addEventListener('scroll', onVV, lsig);
     }
 
     await this.show();
 
-    // Auto-open the bubble with the greeting + focus input so users see
-    // immediately that they can ask questions.
+    // Auto-open the bubble with the greeting so users see immediately that
+    // they can ask questions.  Do NOT focus the input — stealing focus on
+    // page load disrupts keyboard and screen-reader users (GPT-Sol P1).
     const initialGreet = this.opts.greeting ?? this.manifest.greetingText;
     if (initialGreet) {
       this.balloon.setText(initialGreet);
-      this.openBubble();
+      this.openBubble(/* autoFocus */ false);
     } else {
       this.pill.show();
       this.repositionPill();
@@ -295,7 +299,8 @@ class MascotImpl implements MascotInstance {
       scale,
     });
     this.renderer.mount(this.opts.parent);
-    makeInteractive(this.renderer.el, {
+    this.cleanupInteractive?.();
+    this.cleanupInteractive = makeInteractive(this.renderer.el, {
       onClick: () => this.onMascotClick(),
       onMove: () => this.repositionAll(),
       onDragEnd: (left, top) => {
@@ -401,22 +406,14 @@ class MascotImpl implements MascotInstance {
     this.scheduleIdleAfterCurrent();
   }
 
-  private bubbleSay(text: string): void {
-    this.balloon.setText(text);
-    this.openBubble();
-    if (this.manifest.speaking && this.queue.hasAnimation(this.manifest.speaking)) {
-      this.queue.play(this.manifest.speaking);
-    }
-  }
-
-  private openBubble(): void {
+  private openBubble(autoFocus = true): void {
     this.cancelIdle();
     this.pill?.hide();
     this.pill?.setExpanded(true);
     this.balloon.show();
     this.setBubbleExpanded(true);
     this.repositionBubble();
-    this.balloon.focusInput();
+    if (autoFocus) this.balloon.focusInput();
   }
 
   /** Keeps aria-expanded on the mascot button in sync with the bubble. */
@@ -435,17 +432,6 @@ class MascotImpl implements MascotInstance {
   private repositionAll(): void {
     this.repositionBubble();
     this.repositionPill();
-  }
-
-  private toggleBubble(): void {
-    if (this.balloon.isVisible()) {
-      this.balloon.hide();
-      this.setBubbleExpanded(false);
-      this.pill?.show();
-      this.repositionPill();
-    } else {
-      this.openBubble();
-    }
   }
 
   async show(): Promise<void> {
@@ -522,6 +508,7 @@ class MascotImpl implements MascotInstance {
         },
       });
       this.history.push({ role: 'assistant', content: reply });
+      this.balloon.announceComplete(reply);
       return reply;
     } catch (e) {
       // A newer overlapping ask() reassigns this.inflight before this one's
@@ -651,15 +638,6 @@ class MascotImpl implements MascotInstance {
     await this.switchTo(nextId);
   }
 
-  /** Build the ordered option list shown in the pill's picker popover. */
-  private buildMascotOptions(): { id: string; name: string; glyph?: string }[] {
-    return listMascots().map((id) => ({
-      id,
-      name: getMascotName(id),
-      glyph: getMascotGlyph(id),
-    }));
-  }
-
   /** Tooltip for the swap glyph. With ≥2 mascots it always names the
    *  next one in the cycle ("Switch to Ninja Cat"). */
   private computeSwapTooltip(): string {
@@ -746,7 +724,6 @@ class MascotImpl implements MascotInstance {
     const next = pool[Math.floor(Math.random() * pool.length)]!;
     this.idleHistory.push(next);
     if (this.idleHistory.length > MascotImpl.IDLE_HISTORY) this.idleHistory.shift();
-    this.idleLastIdx = next;
     this.queue.play(candidates[next]!);
     // Re-arm after this idle finishes.
     this.scheduleIdleAfterCurrent();
@@ -760,6 +737,9 @@ class MascotImpl implements MascotInstance {
     this.idleDisabled = true;
     this.cancelIdle();
     this.inflight?.abort();
+    this.lifecycleAc.abort();
+    this.cleanupInteractive?.();
+    this.cleanupInteractive = null;
     this.queue.stop();
     this.renderer.unmount();
     this.balloon.unmount();

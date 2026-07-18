@@ -37,7 +37,7 @@ const STYLE = `
     white-space: nowrap;
     border: 0;
   }
-  .text { white-space: pre-wrap; word-wrap: break-word; }
+  .text { white-space: pre-wrap; word-wrap: break-word; max-height: min(40vh, 260px); overflow-y: auto; }
   form { display: flex; gap: 6px; margin-top: 8px; }
   input {
     flex: 1; min-width: 0;
@@ -104,6 +104,8 @@ export class Balloon {
   private textEl!: HTMLDivElement;
   private input!: HTMLInputElement;
   private retryBtn!: HTMLButtonElement;
+  /** Visually hidden live region — announced only on stream completion. */
+  private liveEl!: HTMLDivElement;
 
   constructor(private opts: BalloonOptions) {
     this.host = document.createElement('div');
@@ -125,9 +127,10 @@ export class Balloon {
     this.box.setAttribute('data-tail', 'down');
     this.box.innerHTML = `
       <div class="row">
-        <div class="text" role="status" aria-live="polite" aria-atomic="false"></div>
+        <div class="text"></div>
         <button class="close" title="Close" aria-label="Close assistant" type="button">×</button>
       </div>
+      <div class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
       <button class="retry" type="button" hidden>Try again</button>
       <form>
         <label for="mascot-ask-input" class="sr-only">Question for the assistant</label>
@@ -141,6 +144,7 @@ export class Balloon {
     this.textEl = this.box.querySelector('.text') as HTMLDivElement;
     this.input = this.box.querySelector('input') as HTMLInputElement;
     this.retryBtn = this.box.querySelector('.retry') as HTMLButtonElement;
+    this.liveEl = this.box.querySelector('[role="status"]') as HTMLDivElement;
     this.input.placeholder = opts.placeholder ?? 'Ask me anything…';
 
     this.box.querySelector('form')!.addEventListener('submit', (e) => {
@@ -160,36 +164,16 @@ export class Balloon {
       this.opts.onRetry?.();
     });
 
-    // Keyboard handling: ESC closes, Tab/Shift+Tab cycle within the bubble
-    // so keyboard focus doesn't escape into the host page while it's open.
+    // Keyboard handling: ESC closes the bubble. No Tab trap — the dialog
+    // is non-modal (aria-modal="false"), so keyboard users should be free
+    // to tab out to the host page per WCAG 2.1.2.
     this.box.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') {
         e.preventDefault();
         this.hide();
         this.opts.onHide?.();
-        return;
-      }
-      if (e.key !== 'Tab') return;
-      const focusables = this.focusables();
-      if (!focusables.length) return;
-      const first = focusables[0]!;
-      const last = focusables[focusables.length - 1]!;
-      const active = this.root.activeElement as HTMLElement | null;
-      if (e.shiftKey && active === first) {
-        e.preventDefault();
-        last.focus();
-      } else if (!e.shiftKey && active === last) {
-        e.preventDefault();
-        first.focus();
       }
     });
-  }
-
-  private focusables(): HTMLElement[] {
-    const sel = 'button:not([hidden]):not([disabled]), input:not([disabled])';
-    return Array.from(this.box.querySelectorAll<HTMLElement>(sel)).filter(
-      (el) => el.offsetParent !== null || el.getClientRects().length > 0,
-    );
   }
 
   mount(parent: ParentNode = document.body): void {
@@ -228,6 +212,14 @@ export class Balloon {
    */
   setBusy(busy: boolean): void {
     this.box.setAttribute('aria-busy', String(busy));
+  }
+
+  /**
+   * Announce the full completed response to screen readers via the
+   * dedicated live region, avoiding token-by-token spam during streaming.
+   */
+  announceComplete(text: string): void {
+    this.liveEl.textContent = text;
   }
 
   /** Show a typed error: red accent + optional Try-again button. */
