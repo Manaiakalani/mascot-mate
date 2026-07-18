@@ -211,7 +211,9 @@ const server = createServer(async (req, res) => {
     const parsed = JSON.parse(body) as { messages?: unknown };
     messages = validateMessages(parsed.messages);
   } catch (e) {
-    sendJsonError(res, 400, (e as Error).message, 'bad_request');
+    if (!res.writableEnded) {
+      sendJsonError(res, 400, (e as Error).message, 'bad_request');
+    }
     return;
   }
 
