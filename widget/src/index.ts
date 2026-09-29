@@ -2,8 +2,23 @@ import { ActionQueue } from './runtime.js';
 import { SpriteRenderer, makeInteractive } from './renderer.js';
 import { Balloon } from './balloon.js';
 import { AskPill } from './ask-pill.js';
-import { askStreaming, MascotError, type ChatMessage } from './chat-client.js';
-import { loadMascot, registerMascot, listMascots, getMascotName, getMascotGlyph, type MascotSource } from './registry.js';
+import {
+  askStreaming,
+  clampMessageChars,
+  MascotError,
+  MAX_MESSAGE_CHARS,
+  trimChatHistory,
+  type ChatMessage,
+} from './chat-client.js';
+import { loadMascot, registerMascot, listMascots, getMascotName, type MascotSource } from './registry.js';
+import {
+  bottomRightAnchor,
+  clampToViewport,
+  invalidateSafeArea,
+  scaleSavedPosition,
+  viewportFrame,
+  type SavedPosition,
+} from './placement.js';
 import type { MascotManifest, MascotMap } from './types.js';
 
 // Discover mascots at build time. Each mascot folder contributes a map.json
@@ -47,6 +62,8 @@ export interface MascotInitOptions {
   greeting?: string;
   systemPrompt?: string;
   parent?: HTMLElement;
+  /** Shared secret sent as `x-mascot-token` when the proxy sets `ASK_TOKEN`. */
+  token?: string;
 }
 
 export interface MascotInstance {
@@ -63,13 +80,6 @@ const STORAGE_KEY = 'mascot:choice';
 const POSITION_KEY = 'mascot:position';
 const SYS_DEFAULT =
   "You are a friendly retro desktop assistant. Keep answers short, helpful, and a touch playful. Plain text only — no markdown.";
-
-interface SavedPosition {
-  left: number;
-  top: number;
-  vw: number;
-  vh: number;
-}
 
 function readSavedPosition(): SavedPosition | null {
   try {
@@ -98,58 +108,20 @@ function writeSavedPosition(p: SavedPosition): void {
   }
 }
 
-/**
- * Read the page's safe-area insets (iOS notch, home indicator, Android
- * gesture nav, foldables). Returns 0 on platforms that don't expose
- * `env(safe-area-inset-*)`. We probe with a hidden element so we always
- * get a real px value rather than parsing CSS strings.
- */
-function readSafeAreaInsets(): { top: number; right: number; bottom: number; left: number } {
-  if (typeof document === 'undefined') return { top: 0, right: 0, bottom: 0, left: 0 };
-  const probe = document.createElement('div');
-  Object.assign(probe.style, {
-    position: 'fixed',
-    top: 'env(safe-area-inset-top, 0px)',
-    right: 'env(safe-area-inset-right, 0px)',
-    bottom: 'env(safe-area-inset-bottom, 0px)',
-    left: 'env(safe-area-inset-left, 0px)',
-    width: '0',
-    height: '0',
-    visibility: 'hidden',
-    pointerEvents: 'none',
-  } as Partial<CSSStyleDeclaration>);
-  document.body.appendChild(probe);
-  const cs = getComputedStyle(probe);
-  const parse = (s: string): number => {
-    const n = parseFloat(s);
-    return Number.isFinite(n) ? n : 0;
-  };
-  const insets = {
-    top: parse(cs.top),
-    right: parse(cs.right),
-    bottom: parse(cs.bottom),
-    left: parse(cs.left),
-  };
-  probe.remove();
-  return insets;
+function readStoredMascot(): string | null {
+  try {
+    return localStorage.getItem(STORAGE_KEY);
+  } catch {
+    return null;
+  }
 }
 
-/** Edge margin used for the resting bottom-right anchor (matches CSS in renderer.ts). */
-const EDGE_MARGIN = 24;
-const SAFE_AREA_PAD = 16;
-
-/**
- * Compute the bottom-right anchor point in current viewport coordinates,
- * accounting for OS safe-area insets so the mascot never sits under a
- * notch, home indicator, or gesture-nav bar.
- */
-function bottomRightAnchor(elW: number, elH: number): { left: number; top: number } {
-  const insets = readSafeAreaInsets();
-  const padR = Math.max(EDGE_MARGIN, insets.right + SAFE_AREA_PAD);
-  const padB = Math.max(EDGE_MARGIN, insets.bottom + SAFE_AREA_PAD);
-  const left = Math.max(0, window.innerWidth - elW - padR);
-  const top = Math.max(0, window.innerHeight - elH - padB);
-  return { left, top };
+function writeStoredMascot(id: string): void {
+  try {
+    localStorage.setItem(STORAGE_KEY, id);
+  } catch {
+    /* private mode, quota — fail silently */
+  }
 }
 
 class MascotImpl implements MascotInstance {
@@ -171,6 +143,13 @@ class MascotImpl implements MascotInstance {
   private lifecycleAc = new AbortController();
   /** Cleanup function returned by makeInteractive(). */
   private cleanupInteractive: (() => void) | null = null;
+  /** Dragged position, or null when the mascot is still on the default corner. */
+  private placed: SavedPosition | null = null;
+  private destroyed = false;
+  /** Bumped whenever idle work is cancelled so in-flight whenIdle callbacks no-op. */
+  private idleGen = 0;
+  private pendingText = '';
+  private textFlushQueued = false;
 
   constructor(private opts: MascotInitOptions) {}
 
@@ -187,12 +166,15 @@ class MascotImpl implements MascotInstance {
       };
       mq.addEventListener?.('change', onMotionChange, { signal: this.lifecycleAc.signal });
     }
-    const id =
-      this.opts.mascot ?? localStorage.getItem(STORAGE_KEY) ?? 'clippy';
-    await this.mountMascot(id);
+    this.placed = readSavedPosition();
+    await this.mountMascot(this.resolveMascotId(this.opts.mascot));
 
     this.balloon = new Balloon({
-      onAsk: (q) => void this.ask(q),
+      onAsk: (q) => {
+        // The bubble already shows the failure. Swallow the rejection so a
+        // later abort (hide, switch, a newer question) is not unhandled.
+        void this.ask(q).catch(() => {});
+      },
       placeholder: 'Ask me anything…',
       onHide: () => {
         this.pill.show();
@@ -205,7 +187,7 @@ class MascotImpl implements MascotInstance {
         this.scheduleIdle();
       },
       onRetry: () => {
-        if (this.lastQuestion) void this.ask(this.lastQuestion);
+        if (this.lastQuestion) void this.ask(this.lastQuestion).catch(() => {});
       },
     });
     this.balloon.mount(this.opts.parent);
@@ -236,33 +218,16 @@ class MascotImpl implements MascotInstance {
       this.openBubble();
     }, lsig);
 
-    window.addEventListener('resize', () => {
-      if (readSavedPosition()) {
-        // User has dragged → re-clamp the saved position into the new
-        // viewport (and into the safe area, if it changed e.g. on rotate).
-        this.clampToViewport();
-      } else {
-        // No saved position → keep the mascot snapped to the bottom-right
-        // safe-area corner regardless of resize/rotate/keyboard show-hide.
-        const r = this.renderer.el.getBoundingClientRect();
-        const { left, top } = bottomRightAnchor(r.width, r.height);
-        this.renderer.setPosition(left, top);
-      }
-      this.repositionAll();
-    }, lsig);
-    // resize event — listen on visualViewport too so the bottom-right
-    // anchor follows the visible area.
+    const onResize = (): void => {
+      invalidateSafeArea();
+      this.relayout();
+    };
+    window.addEventListener('resize', onResize, lsig);
+    // visualViewport follows the keyboard and mobile browser chrome.
+    // Scroll does not change safe-area insets, so don't remeasure those.
     if (typeof visualViewport !== 'undefined' && visualViewport) {
-      const onVV = () => {
-        if (!readSavedPosition()) {
-          const r = this.renderer.el.getBoundingClientRect();
-          const { left, top } = bottomRightAnchor(r.width, r.height);
-          this.renderer.setPosition(left, top);
-          this.repositionAll();
-        }
-      };
-      visualViewport.addEventListener('resize', onVV, lsig);
-      visualViewport.addEventListener('scroll', onVV, lsig);
+      visualViewport.addEventListener('resize', onResize, lsig);
+      visualViewport.addEventListener('scroll', () => this.relayout(), lsig);
     }
 
     await this.show();
@@ -305,7 +270,9 @@ class MascotImpl implements MascotInstance {
       onClick: () => this.onMascotClick(),
       onMove: () => this.repositionAll(),
       onDragEnd: (left, top) => {
-        writeSavedPosition({ left, top, vw: window.innerWidth, vh: window.innerHeight });
+        const frame = viewportFrame();
+        this.placed = { left, top, vw: frame.width, vh: frame.height };
+        writeSavedPosition(this.placed);
       },
     });
     // Keyboard activation: mirrors native <button> semantics so keyboard
@@ -333,57 +300,39 @@ class MascotImpl implements MascotInstance {
     this.restorePosition();
   }
 
+  /** Id the user asked for, else their saved choice, else the first registered mascot. */
+  private resolveMascotId(preferred?: string): string {
+    const requested = preferred ?? readStoredMascot() ?? 'clippy';
+    if (listMascots().includes(requested)) return requested;
+    return listMascots()[0] ?? 'clippy';
+  }
+
   /**
-   * Apply any persisted drag position from a previous session, clamping into
-   * the current viewport. If the saved position would put the mascot off
-   * screen (e.g., user resized down), we re-clamp instead of discarding so
-   * the user's intent is preserved. With no saved position, we explicitly
-   * snap the mascot to the safe-area-aware bottom-right corner so the
-   * default placement is consistent across iOS notches, Android gesture
-   * bars, and embedded contexts where CSS env() insets matter.
+   * Apply a persisted drag, scaled into the current frame and clamped to the
+   * safe area. With no saved position, snap to the bottom-right corner.
+   * One frame of delay so the sprite box has a measurable size.
    */
   private restorePosition(): void {
-    const saved = readSavedPosition();
-    // Wait one frame so the renderer's box has measurable dimensions.
     requestAnimationFrame(() => {
-      const r = this.renderer.el.getBoundingClientRect();
-      const elW = r.width || this.renderer.el.offsetWidth;
-      const elH = r.height || this.renderer.el.offsetHeight;
-      if (!saved) {
-        // No saved position → snap to the safe-area-aware bottom-right,
-        // overriding the CSS bottom/right anchor with explicit pixel
-        // coordinates so subsequent dragging/resizing has consistent math.
-        const { left, top } = bottomRightAnchor(elW, elH);
-        this.renderer.setPosition(left, top);
-        this.repositionAll();
-        return;
-      }
-      const insets = readSafeAreaInsets();
-      const minL = Math.max(0, insets.left);
-      const minT = Math.max(0, insets.top);
-      const maxL = Math.max(minL, window.innerWidth - elW - Math.max(0, insets.right));
-      const maxT = Math.max(minT, window.innerHeight - elH - Math.max(0, insets.bottom));
-      const left = Math.min(Math.max(minL, saved.left), maxL);
-      const top = Math.min(Math.max(minT, saved.top), maxT);
-      this.renderer.setPosition(left, top);
-      this.repositionAll();
+      if (this.destroyed) return;
+      this.relayout();
     });
   }
 
-  private clampToViewport(): void {
+  private relayout(): void {
+    if (this.destroyed) return;
     const r = this.renderer.el.getBoundingClientRect();
-    const insets = readSafeAreaInsets();
-    const minL = Math.max(0, insets.left);
-    const minT = Math.max(0, insets.top);
-    const maxL = Math.max(minL, window.innerWidth - r.width - Math.max(0, insets.right));
-    const maxT = Math.max(minT, window.innerHeight - r.height - Math.max(0, insets.bottom));
-    const left = Math.min(Math.max(minL, r.left), maxL);
-    const top = Math.min(Math.max(minT, r.top), maxT);
-    if (left !== r.left || top !== r.top) {
-      this.renderer.setPosition(left, top);
-      // Persist the clamped value so future sessions don't keep clamping.
-      writeSavedPosition({ left, top, vw: window.innerWidth, vh: window.innerHeight });
+    const elW = r.width || this.renderer.el.offsetWidth;
+    const elH = r.height || this.renderer.el.offsetHeight;
+    const frame = viewportFrame();
+    const scaled = this.placed ? scaleSavedPosition(this.placed, frame.width, frame.height) : null;
+    const next = scaled ? clampToViewport(scaled.left, scaled.top, elW, elH) : bottomRightAnchor(elW, elH);
+    if (Math.abs(r.left - next.left) < 0.5 && Math.abs(r.top - next.top) < 0.5) {
+      this.repositionAll();
+      return;
     }
+    this.renderer.setPosition(next.left, next.top);
+    this.repositionAll();
   }
 
   /**
@@ -400,10 +349,9 @@ class MascotImpl implements MascotInstance {
       this.openBubble();
       return;
     }
-    this.queue.stop();
     const name = fun[this.clickIdx % fun.length]!;
     this.clickIdx++;
-    this.queue.play(name);
+    this.queue.playNow(name);
     this.scheduleIdleAfterCurrent();
   }
 
@@ -423,11 +371,13 @@ class MascotImpl implements MascotInstance {
   }
 
   private repositionBubble(): void {
+    if (!this.balloon.isVisible()) return;
     this.balloon.positionAbove(this.renderer.getRect());
   }
 
   private repositionPill(): void {
-    this.pill?.positionNear(this.renderer.getRect());
+    if (!this.pill?.isVisible()) return;
+    this.pill.positionNear(this.renderer.getRect());
   }
 
   private repositionAll(): void {
@@ -438,24 +388,44 @@ class MascotImpl implements MascotInstance {
   async show(): Promise<void> {
     this.renderer.show();
     if (this.manifest.greeting && !this.idleDisabled) {
-      this.queue.play(this.manifest.greeting);
+      this.queue.playNow(this.manifest.greeting);
     }
     this.scheduleIdle();
   }
 
   async hide(): Promise<void> {
     this.cancelIdle();
-    if (this.manifest.goodbye && !this.idleDisabled) {
-      this.queue.play(this.manifest.goodbye);
-    }
+    // Abort first and drop the handle so a late error cannot reopen the bubble.
+    this.inflight?.abort();
+    this.inflight = null;
     this.balloon.hide();
     this.setBubbleExpanded(false);
-    // Wait briefly for goodbye to finish.
-    await new Promise((r) => setTimeout(r, this.idleDisabled ? 0 : 600));
+    this.pill?.hide();
+    if (this.manifest.goodbye && !this.idleDisabled && !this.destroyed) {
+      this.queue.playNow(this.manifest.goodbye);
+      await Promise.race([
+        this.queue.whenIdle(),
+        new Promise((resolve) => setTimeout(resolve, 2000)),
+      ]);
+    }
+    this.queue.stop();
+    if (this.destroyed) return;
     this.renderer.hide();
   }
 
   async ask(q: string): Promise<string> {
+    if (q.length > MAX_MESSAGE_CHARS) {
+      const err = new MascotError(
+        'bad_request',
+        `That question is too long (max ${MAX_MESSAGE_CHARS} characters).`,
+      );
+      this.balloon.show();
+      this.setBubbleExpanded(true);
+      this.balloon.showError(err.message, { retryable: false });
+      this.repositionBubble();
+      throw err;
+    }
+
     this.cancelIdle();
     this.inflight?.abort();
     const controller = new AbortController();
@@ -468,46 +438,63 @@ class MascotImpl implements MascotInstance {
     this.balloon.setText('Thinking…');
     this.repositionBubble();
     if (this.manifest.thinking && this.queue.hasAnimation(this.manifest.thinking)) {
-      this.queue.play(this.manifest.thinking);
+      this.queue.playNow(this.manifest.thinking);
     }
+    this.scheduleIdleAfterCurrent();
     // Keep a direct reference to the turn *this* call pushed so cleanup can
     // remove exactly this entry later, even if a newer overlapping ask() has
     // since pushed its own turn onto the same history array.
     const turn: ChatMessage = { role: 'user', content: q };
     this.history.push(turn);
+    this.history = trimChatHistory(this.history);
+    const outgoing = clampMessageChars(this.history);
 
     let firstToken = true;
-    // Streamed tokens can arrive many times per frame; batch reposition calls
-    // to at most once per animation frame instead of once per token so a fast
-    // stream doesn't force a layout/reflow on every delta.
-    let repositionQueued = false;
-    const scheduleReposition = (): void => {
-      if (repositionQueued) return;
-      repositionQueued = true;
-      requestAnimationFrame(() => {
-        repositionQueued = false;
-        this.repositionBubble();
-      });
+    // Streamed tokens can arrive many times per frame. Hold the text and the
+    // bubble measurement until the next frame so a fast stream doesn't write
+    // the DOM once per delta.
+    const flushText = (): void => {
+      this.textFlushQueued = false;
+      // Drop buffered tokens once this turn is no longer the visible one,
+      // so a late frame can't append them onto an error or a newer answer.
+      if (this.inflight !== controller) {
+        this.pendingText = '';
+        return;
+      }
+      if (!this.pendingText) return;
+      const chunk = this.pendingText;
+      this.pendingText = '';
+      this.balloon.appendText(chunk);
+      this.repositionBubble();
+    };
+    const scheduleText = (delta: string): void => {
+      this.pendingText += delta;
+      if (this.textFlushQueued) return;
+      this.textFlushQueued = true;
+      requestAnimationFrame(flushText);
     };
     try {
       const reply = await askStreaming({
         endpoint: this.opts.endpoint,
-        messages: this.history,
+        messages: outgoing,
+        token: this.opts.token,
         signal: controller.signal,
         onToken: (delta) => {
           if (firstToken) {
             firstToken = false;
             this.balloon.setBusy(false);
             this.balloon.setText('');
+            this.pendingText = '';
             if (this.manifest.speaking && this.queue.hasAnimation(this.manifest.speaking)) {
+              this.queue.playNow(this.manifest.speaking);
+            } else {
               this.queue.stop();
-              this.queue.play(this.manifest.speaking);
             }
           }
-          this.balloon.appendText(delta);
-          scheduleReposition();
+          scheduleText(delta);
         },
       });
+      flushText();
       this.history.push({ role: 'assistant', content: reply });
       this.balloon.announceComplete(reply);
       return reply;
@@ -556,8 +543,7 @@ class MascotImpl implements MascotInstance {
     // Play an Alert anim if the mascot defines one.
     for (const name of ['Alert', 'GetAttention', 'OOPS', 'Oops']) {
       if (this.queue.hasAnimation(name)) {
-        this.queue.stop();
-        this.queue.play(name);
+        this.queue.playNow(name);
         break;
       }
     }
@@ -577,7 +563,7 @@ class MascotImpl implements MascotInstance {
       case 'unauthorized':
         return {
           text:
-            "I can't reach my brain — the assistant isn't configured. Check that the proxy has an API key set.",
+            "I can't reach my brain — the assistant isn't configured, or it refused this request. Check the proxy's API key.",
           retryable: false,
         };
       case 'network':
@@ -602,20 +588,24 @@ class MascotImpl implements MascotInstance {
     // Cancel any in-flight ask so a late-arriving stream can't keep
     // appending the old mascot's reply into the new mascot's bubble/greeting.
     this.inflight?.abort();
+    this.inflight = null;
     if (this.manifest.goodbye && !this.idleDisabled) {
-      this.queue.play(this.manifest.goodbye);
-      await new Promise((r) => setTimeout(r, 800));
+      this.queue.playNow(this.manifest.goodbye);
+      await Promise.race([
+        this.queue.whenIdle(),
+        new Promise((resolve) => setTimeout(resolve, 2000)),
+      ]);
     }
     this.queue.stop();
     this.renderer.unmount();
     await this.mountMascot(id);
-    localStorage.setItem(STORAGE_KEY, id);
+    writeStoredMascot(id);
     this.renderer.show();
     // Re-theme the ask-me pill to match the new mascot.
     this.pill?.setTheme(this.manifest.theme);
     this.pill?.setSwapTooltip(this.computeSwapTooltip());
     this.pill?.setCurrent(this.manifest.id);
-    if (this.manifest.greeting && !this.idleDisabled) this.queue.play(this.manifest.greeting);
+    if (this.manifest.greeting && !this.idleDisabled) this.queue.playNow(this.manifest.greeting);
     // Update bubble greeting text to the new mascot's voice.
     const greet = this.manifest.greetingText ?? `Hi! I'm ${this.manifest.name}. Click me and ask a question.`;
     this.balloon.setText(greet);
@@ -666,6 +656,7 @@ class MascotImpl implements MascotInstance {
   private static readonly IDLE_HISTORY = 3;
 
   private cancelIdle(): void {
+    this.idleGen += 1;
     if (this.idleTimer) {
       clearTimeout(this.idleTimer);
       this.idleTimer = null;
@@ -681,20 +672,24 @@ class MascotImpl implements MascotInstance {
     this.idleTimer = setTimeout(() => this.runIdle(), wait);
   }
 
-  /** Schedule the next idle to start once any in-flight queued anim finishes. */
+  /**
+   * Arm the next idle once the queue drains. While a request is in flight,
+   * a finished Thinking loop is restarted so the mascot keeps fidgeting
+   * instead of freezing on the last frame.
+   */
   private scheduleIdleAfterCurrent(): void {
     if (this.idleDisabled) return;
     this.cancelIdle();
-    // Wait for queue to drain (cheaply: poll a couple of times) then schedule.
-    const tryArm = (): void => {
-      if (this.idleDisabled) return;
-      if (this.queue.isBusy()) {
-        this.idleTimer = setTimeout(tryArm, 400);
+    const gen = this.idleGen;
+    void this.queue.whenIdle().then(() => {
+      if (gen !== this.idleGen || this.idleDisabled || this.destroyed) return;
+      if (this.inflight && this.manifest.thinking && this.queue.hasAnimation(this.manifest.thinking)) {
+        this.queue.play(this.manifest.thinking);
+        this.scheduleIdleAfterCurrent();
         return;
       }
       this.scheduleIdle();
-    };
-    this.idleTimer = setTimeout(tryArm, 400);
+    });
   }
 
   private runIdle(): void {
@@ -735,6 +730,7 @@ class MascotImpl implements MascotInstance {
   }
 
   destroy(): void {
+    this.destroyed = true;
     this.idleDisabled = true;
     this.cancelIdle();
     this.inflight?.abort();
@@ -764,7 +760,8 @@ function autoMount(): void {
   const mascot = script.dataset.mascot;
   const greeting = script.dataset.greeting;
   const systemPrompt = script.dataset.system;
-  void init({ endpoint, mascot, greeting, systemPrompt })
+  const token = script.dataset.token;
+  void init({ endpoint, mascot, greeting, systemPrompt, token })
     .then((inst) => {
       // expose for console / programmatic use
       (window as unknown as { Mascot: MascotInstance }).Mascot = inst;

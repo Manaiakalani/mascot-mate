@@ -1,5 +1,6 @@
 import type { Frame, MascotMap } from './types.js';
 import type { RendererPort } from './runtime.js';
+import { clampToViewport } from './placement.js';
 
 /**
  * DOM renderer for ClippyJS-style sprite sheets. Renders one stacked div per
@@ -60,6 +61,7 @@ export class SpriteRenderer implements RendererPort {
       position: 'absolute',
       inset: '0',
       overflow: 'hidden',
+      contain: 'paint',
     } satisfies Partial<CSSStyleDeclaration>);
     root.appendChild(inner);
     this.inner = inner;
@@ -82,6 +84,11 @@ export class SpriteRenderer implements RendererPort {
       inner.appendChild(o);
       this.overlays.push(o);
     }
+    // Share one decoded bitmap with the CSS backgrounds so the first frame
+    // isn't blank while the sheet downloads.
+    const preload = new Image();
+    preload.decoding = 'async';
+    preload.src = spritesheetUrl;
     this.el = root;
   }
 
@@ -159,9 +166,6 @@ export function makeInteractive(
   let dx = 0;
   let dy = 0;
 
-  const clamp = (v: number, lo: number, hi: number): number =>
-    v < lo ? lo : v > hi ? hi : v;
-
   const onPointerDown = (e: PointerEvent): void => {
     // Only primary mouse button; touch/pen always treated as primary.
     if (e.pointerType === 'mouse' && e.button !== 0) return;
@@ -187,12 +191,7 @@ export function makeInteractive(
       dragging = true;
       el.style.cursor = 'grabbing';
     }
-    const elW = el.offsetWidth;
-    const elH = el.offsetHeight;
-    const vw = window.innerWidth;
-    const vh = window.innerHeight;
-    const left = clamp(e.clientX - dx, 0, Math.max(0, vw - elW));
-    const top = clamp(e.clientY - dy, 0, Math.max(0, vh - elH));
+    const { left, top } = clampToViewport(e.clientX - dx, e.clientY - dy, el.offsetWidth, el.offsetHeight);
     el.style.left = `${left}px`;
     el.style.top = `${top}px`;
     el.style.right = 'auto';

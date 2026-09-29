@@ -610,6 +610,10 @@ export class AskPill {
     this.host.remove();
   }
 
+  isVisible(): boolean {
+    return !this.pill.classList.contains('hidden');
+  }
+
   show(): void {
     this.pill.classList.remove('hidden');
   }

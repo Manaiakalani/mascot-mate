@@ -19,48 +19,81 @@ export interface RendererPort {
  * promise that resolves when the animation reaches its natural end or is
  * cancelled.
  */
+/** Safety cap so a broken map cannot pin the queue forever. */
+const MAX_STEPS = 480;
+/**
+ * Clippy's Thinking / GetTechy sheets branch backward with weight 100,
+ * which never rolls an exit. After a handful of loops, take the forward
+ * edge so the queue can drain. Probabilistic fidgets (weight < 100) are
+ * left alone — they already terminate.
+ */
+const MAX_TRAPPED_LOOPS = 8;
+
 export function playAnimation(
   anim: Animation,
   renderer: RendererPort,
   name: string,
 ): RunningAnimation {
   let cancelled = false;
+  let settled = false;
   let timer: ReturnType<typeof setTimeout> | null = null;
   let resolveDone!: (r: EndReason) => void;
   const done = new Promise<EndReason>((res) => (resolveDone = res));
+  let steps = 0;
+  let trapped = 0;
+
+  const finish = (reason: EndReason): void => {
+    if (settled) return;
+    settled = true;
+    if (timer) clearTimeout(timer);
+    timer = null;
+    resolveDone(reason);
+  };
 
   const step = (idx: number) => {
     if (cancelled) {
-      resolveDone('cancelled');
+      finish('cancelled');
       return;
     }
+    if (steps >= MAX_STEPS) {
+      finish('finished');
+      return;
+    }
+    steps += 1;
     const frame = anim.frames[idx];
     if (!frame) {
-      resolveDone('finished');
+      finish('finished');
       return;
     }
     renderer.showFrame(frame);
 
     let nextIdx = idx + 1;
     if (frame.exitBranch !== undefined) {
-      // exitBranch is used as the natural end-of-animation index.
-      // We treat reaching it as "finished" by default unless branching tells
-      // us to jump elsewhere.
+      // exitBranch is a jump. Past-the-end means the animation is over.
       nextIdx = frame.exitBranch;
     }
-    if (frame.branching) {
+    const branches = frame.branching?.branches;
+    if (branches && branches.length) {
       const roll = Math.random() * 100;
       let acc = 0;
-      for (const b of frame.branching.branches) {
+      for (const b of branches) {
         acc += b.weight;
         if (roll <= acc) {
           nextIdx = b.frameIndex;
           break;
         }
       }
+      const weight = branches.reduce((sum, b) => sum + b.weight, 0);
+      const trap = weight >= 100 && branches.every((b) => b.frameIndex <= idx);
+      if (trap && nextIdx <= idx) {
+        trapped += 1;
+        if (trapped > MAX_TRAPPED_LOOPS) nextIdx = idx + 1;
+      } else if (nextIdx > idx) {
+        trapped = 0;
+      }
     }
     if (nextIdx >= anim.frames.length || nextIdx < 0) {
-      resolveDone('finished');
+      finish('finished');
       return;
     }
     timer = setTimeout(() => step(nextIdx), Math.max(10, frame.duration));
@@ -73,8 +106,7 @@ export function playAnimation(
     done,
     cancel() {
       cancelled = true;
-      if (timer) clearTimeout(timer);
-      resolveDone('cancelled');
+      finish('cancelled');
     },
   };
 }
@@ -92,6 +124,7 @@ export class ActionQueue {
   private q: Action[] = [];
   private running = false;
   private current: RunningAnimation | null = null;
+  private drainWaiters: Array<() => void> = [];
 
   constructor(
     private map: MascotMap,
@@ -102,6 +135,20 @@ export class ActionQueue {
     this.q.push({ kind: 'play', name });
     this.tick();
     return this;
+  }
+
+  /** Drop whatever is playing and start `name` now. */
+  playNow(name: string): this {
+    this.stop();
+    return this.play(name);
+  }
+
+  /** Resolves when the queue is empty and nothing is playing. */
+  whenIdle(): Promise<void> {
+    if (!this.isBusy()) return Promise.resolve();
+    return new Promise((resolve) => {
+      this.drainWaiters.push(resolve);
+    });
   }
 
   wait(ms: number): this {
@@ -120,6 +167,7 @@ export class ActionQueue {
   stop(): void {
     this.q = [];
     this.current?.cancel();
+    if (!this.running) this.flushDrain();
   }
 
   hasAnimation(name: string): boolean {
@@ -151,6 +199,17 @@ export class ActionQueue {
       }
     } finally {
       this.running = false;
+      if (this.q.length) {
+        void this.tick();
+      } else {
+        this.flushDrain();
+      }
     }
+  }
+
+  private flushDrain(): void {
+    if (this.running || this.q.length || this.current) return;
+    const waiters = this.drainWaiters.splice(0);
+    for (const waiter of waiters) waiter();
   }
 }

@@ -18,7 +18,8 @@
     <p>Click the mascot, type a question, hit <code>Ask</code>. Use the buttons below to switch.</p>
     <div class="controls">
       <button id="clippy">Clippy</button>
-      <button id="ninjacat">Ninjacat</button>
+      <button id="ninjacat">Ninja Cat</button>
+      <button id="bob">Bob</button>
       <button id="hide">Hide</button>
       <button id="show">Show</button>
     </div>
@@ -34,6 +35,7 @@
       window.Mascot = m;
       document.getElementById('clippy').onclick = () => m.switchTo('clippy');
       document.getElementById('ninjacat').onclick = () => m.switchTo('ninjacat').catch((e) => alert(e.message));
+      document.getElementById('bob').onclick = () => m.switchTo('bob').catch((e) => alert(e.message));
       document.getElementById('hide').onclick = () => m.hide();
       document.getElementById('show').onclick = () => m.show();
     </script>

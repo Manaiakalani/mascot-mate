@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { askStreaming, MascotError } from '../src/chat-client.js';
+import { askStreaming, clampMessageChars, MascotError, trimChatHistory } from '../src/chat-client.js';
 
 const enc = new TextEncoder();
 
@@ -187,5 +187,82 @@ describe('chat-client error classification', () => {
       expect(full).toBe('Hello');
       expect(tokens).toEqual(['He', 'llo']);
     });
+  });
+
+  it('flushes a final SSE event that has no trailing blank line', async () => {
+    const stream = makeStream(['data: {"delta":"Hi"}\n\n', 'data: {"delta":"!"}\n']);
+    const fetchImpl = (async () =>
+      new Response(stream, {
+        status: 200,
+        headers: { 'content-type': 'text/event-stream' },
+      })) as unknown as typeof fetch;
+    await withFetch(fetchImpl, async () => {
+      const full = await askStreaming({
+        endpoint: '/x',
+        messages: [{ role: 'user', content: 'hi' }],
+        onToken: () => {},
+      });
+      expect(full).toBe('Hi!');
+    });
+  });
+
+  it('rejects with timeout when the body stalls', async () => {
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(enc.encode('data: {"delta":"Hi"}\n\n'));
+      },
+    });
+    const fetchImpl = (async () =>
+      new Response(stream, {
+        status: 200,
+        headers: { 'content-type': 'text/event-stream' },
+      })) as unknown as typeof fetch;
+    await withFetch(fetchImpl, async () => {
+      await expect(
+        askStreaming({
+          endpoint: '/x',
+          messages: [{ role: 'user', content: 'hi' }],
+          onToken: () => {},
+          stallMs: 40,
+        }),
+      ).rejects.toMatchObject({ kind: 'timeout' });
+    });
+  });
+
+  it('rejects with timeout when the request never returns headers', async () => {
+    const fetchImpl = ((_url: string, init?: RequestInit) =>
+      new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => {
+          reject(new DOMException('The operation was aborted', 'AbortError'));
+        });
+      })) as unknown as typeof fetch;
+    await withFetch(fetchImpl, async () => {
+      await expect(
+        askStreaming({
+          endpoint: '/x',
+          messages: [{ role: 'user', content: 'hi' }],
+          onToken: () => {},
+          stallMs: 40,
+        }),
+      ).rejects.toMatchObject({ kind: 'timeout' });
+    });
+  });
+});
+
+describe('chat history shaping', () => {
+  it('keeps the system turn and the newest messages', () => {
+    const messages = [
+      { role: 'system' as const, content: 'sys' },
+      ...Array.from({ length: 10 }, (_, i) => ({ role: 'user' as const, content: `u${i}` })),
+    ];
+    const trimmed = trimChatHistory(messages, 4);
+    expect(trimmed.map((m) => m.content)).toEqual(['sys', 'u7', 'u8', 'u9']);
+  });
+
+  it('clips overlong turns without mutating the original', () => {
+    const original = [{ role: 'user' as const, content: 'abcdef' }];
+    const clamped = clampMessageChars(original, 3);
+    expect(clamped[0]?.content).toBe('abc');
+    expect(original[0]?.content).toBe('abcdef');
   });
 });
