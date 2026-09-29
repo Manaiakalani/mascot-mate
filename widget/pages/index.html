@@ -17,7 +17,7 @@
   </head>
   <body>
     <h1>Mascot Mate — GitHub Pages demo</h1>
-    <p>Click the mascot, type a question, hit <code>Ask</code>. Use the buttons below to switch.</p>
+    <p>Drag the mascot, switch characters, and play the greeting. This page is the sprite demo.</p>
     <div class="controls">
       <button id="clippy">Switch to Clippy</button>
       <button id="ninjacat">Switch to Ninja Cat</button>
@@ -28,10 +28,10 @@
     </div>
     <div class="status" id="status">Booting widget…</div>
     <p class="note">
-      The chat endpoint is not deployed with the static demo, so asking questions
-      will fail unless you point it at your own running server. See the
+      Asking a question here explains that no chat proxy is deployed.
+      Run the server from the
       <a href="https://github.com/Manaiakalani/mascot-mate">repository README</a>
-      for how to run the server locally.
+      and point a local copy of the widget at it.
     </p>
 
     <script type="module">
@@ -39,9 +39,8 @@
       const status = document.getElementById('status');
       try {
         const m = await init({
-          // No public endpoint is deployed for the static Pages demo.
-          // Override at runtime via window.Mascot if you have one running.
-          endpoint: 'http://localhost:8787/api/ask',
+          // Sprite demo only. A blank endpoint tells the widget not to call a proxy.
+          endpoint: '',
           mascot: 'clippy',
         });
         window.Mascot = m;

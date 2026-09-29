@@ -3,15 +3,15 @@
  * completions as SSE back to the browser widget. CORS allow-list and
  * per-IP rate limiting included. No external web framework.
  */
-import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { timingSafeEqual } from 'node:crypto';
 import { config as loadEnv } from 'dotenv';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { dirname, resolve } from 'node:path';
 import { existsSync } from 'node:fs';
 import { streamChat, UpstreamError, type OpenAIMessage } from './openai.js';
 import { TokenBucket } from './rate-limit.js';
-import { pinSystemPrompt, resolveUpstream } from './upstream.js';
+import { pinSystemPrompt, resolveUpstream, type UpstreamConfig } from './upstream.js';
 
 // Load .env from server/ first, then fall back to monorepo root.
 const here = dirname(fileURLToPath(import.meta.url));
@@ -26,46 +26,53 @@ for (const p of [
   }
 }
 
-const PORT = Number(process.env.PORT ?? 8787);
-const upstream = resolveUpstream(process.env);
-const KEY = upstream.apiKey;
-const MODEL = upstream.model;
-const ASK_TOKEN = process.env.ASK_TOKEN ?? '';
-const SYSTEM_PROMPT = process.env.SYSTEM_PROMPT;
-const ALLOWED = (process.env.ALLOWED_ORIGINS ?? '*')
-  .split(',')
-  .map((s) => s.trim())
-  .filter(Boolean);
-const RPM = Number(process.env.RATE_LIMIT_RPM ?? 20);
-const TRUST_PROXY = process.env.TRUST_PROXY === 'true';
 const MAX_BODY = 32 * 1024;
 const BODY_TIMEOUT_MS = 10_000;
 const MAX_MESSAGES = 40;
 const MAX_CONTENT = 4000;
 
-if (!KEY) {
-  console.warn('⚠ OPENAI_API_KEY not set — /api/ask will return 500.');
+interface ProxyConfig {
+  upstream: UpstreamConfig;
+  askToken: string;
+  systemPrompt: string | undefined;
+  allowed: string[];
+  trustProxy: boolean;
+  limiter: TokenBucket;
 }
 
-const limiter = new TokenBucket(RPM, RPM / 60);
+export function createProxyServer(env: Record<string, string | undefined> = process.env): Server {
+  const rpm = Number(env.RATE_LIMIT_RPM ?? 20);
+  const config: ProxyConfig = {
+    upstream: resolveUpstream(env),
+    askToken: env.ASK_TOKEN ?? '',
+    systemPrompt: env.SYSTEM_PROMPT,
+    allowed: (env.ALLOWED_ORIGINS ?? '*')
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean),
+    trustProxy: env.TRUST_PROXY === 'true',
+    limiter: new TokenBucket(Number.isFinite(rpm) && rpm > 0 ? rpm : 20, (Number.isFinite(rpm) && rpm > 0 ? rpm : 20) / 60),
+  };
+  return createServer((req, res) => handle(req, res, config));
+}
 
-function originAllowed(origin: string | undefined): string | null {
+function originAllowed(origin: string | undefined, allowed: string[]): string | null {
   if (!origin) return null;
-  if (ALLOWED.includes('*')) return '*';
-  return ALLOWED.includes(origin) ? origin : null;
+  if (allowed.includes('*')) return '*';
+  return allowed.includes(origin) ? origin : null;
 }
 
-function setCors(req: IncomingMessage, res: ServerResponse): boolean {
+function setCors(req: IncomingMessage, res: ServerResponse, allowed: string[]): boolean {
   const origin = req.headers.origin as string | undefined;
-  const allowed = originAllowed(origin);
-  if (origin && !allowed) {
+  const ok = originAllowed(origin, allowed);
+  if (origin && !ok) {
     sendJsonError(res, 403, 'origin not allowed', 'forbidden');
     return false;
   }
-  if (allowed) res.setHeader('access-control-allow-origin', allowed);
+  if (ok) res.setHeader('access-control-allow-origin', ok);
   res.setHeader('vary', 'origin');
   res.setHeader('access-control-allow-methods', 'POST, OPTIONS');
-  res.setHeader('access-control-allow-headers', 'content-type');
+  res.setHeader('access-control-allow-headers', 'content-type, x-mascot-token');
   res.setHeader('access-control-max-age', '86400');
   return true;
 }
@@ -90,10 +97,10 @@ function sendJsonError(
   res.end(JSON.stringify({ error, kind }));
 }
 
-function tokenOk(header: string | undefined): boolean {
-  if (!ASK_TOKEN) return true;
+function tokenOk(header: string | undefined, askToken: string): boolean {
+  if (!askToken) return true;
   const got = Buffer.from(header ?? '');
-  const expect = Buffer.from(ASK_TOKEN);
+  const expect = Buffer.from(askToken);
   if (got.length !== expect.length) {
     timingSafeEqual(expect, expect);
     return false;
@@ -101,8 +108,8 @@ function tokenOk(header: string | undefined): boolean {
   return timingSafeEqual(got, expect);
 }
 
-function clientIp(req: IncomingMessage): string {
-  if (TRUST_PROXY) {
+function clientIp(req: IncomingMessage, trustProxy: boolean): string {
+  if (trustProxy) {
     const fwd = (req.headers['x-forwarded-for'] as string | undefined)?.split(',')[0]?.trim();
     if (fwd) return fwd;
   }
@@ -110,8 +117,9 @@ function clientIp(req: IncomingMessage): string {
 }
 
 async function readBody(req: IncomingMessage): Promise<string> {
-  return new Promise((resolve, reject) => {
+  return new Promise((resolveBody, reject) => {
     let total = 0;
+    let tooLarge = false;
     let settled = false;
     const chunks: Buffer[] = [];
     const timer = setTimeout(() => {
@@ -122,13 +130,9 @@ async function readBody(req: IncomingMessage): Promise<string> {
     }, BODY_TIMEOUT_MS);
     req.on('data', (c: Buffer) => {
       total += c.length;
+      // Keep reading so the client can receive 413. Bytes past the cap are dropped.
       if (total > MAX_BODY) {
-        if (!settled) {
-          settled = true;
-          clearTimeout(timer);
-          reject(new Error('payload too large'));
-        }
-        req.destroy();
+        tooLarge = true;
         return;
       }
       chunks.push(c);
@@ -137,7 +141,8 @@ async function readBody(req: IncomingMessage): Promise<string> {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      resolve(Buffer.concat(chunks).toString('utf8'));
+      if (tooLarge) reject(new Error('payload too large'));
+      else resolveBody(Buffer.concat(chunks).toString('utf8'));
     });
     req.on('error', (e) => {
       if (settled) return;
@@ -186,8 +191,9 @@ function validateMessages(input: unknown): OpenAIMessage[] {
   });
 }
 
-const server = createServer(async (req, res) => {
-  if (!setCors(req, res)) return;
+async function handle(req: IncomingMessage, res: ServerResponse, config: ProxyConfig): Promise<void> {
+  const { upstream } = config;
+  if (!setCors(req, res, config.allowed)) return;
   if (req.method === 'OPTIONS') {
     res.statusCode = 204;
     res.end();
@@ -196,7 +202,7 @@ const server = createServer(async (req, res) => {
 
   if (req.method === 'GET' && req.url === '/health') {
     res.setHeader('content-type', 'application/json');
-    res.end(JSON.stringify({ ok: true, model: MODEL }));
+    res.end(JSON.stringify({ ok: true, model: upstream.model }));
     return;
   }
 
@@ -205,7 +211,7 @@ const server = createServer(async (req, res) => {
     return;
   }
 
-  if (!KEY) {
+  if (!upstream.apiKey) {
     sendJsonError(
       res,
       503,
@@ -215,17 +221,17 @@ const server = createServer(async (req, res) => {
     return;
   }
 
-  const ip = clientIp(req);
-  if (!limiter.take(ip)) {
+  const ip = clientIp(req, config.trustProxy);
+  if (!config.limiter.take(ip)) {
     sendJsonError(res, 429, 'rate limit exceeded', 'rate_limit', {
-      'retry-after': String(limiter.retryAfter(ip)),
+      'retry-after': String(config.limiter.retryAfter(ip)),
     });
     return;
   }
 
   const provided = req.headers['x-mascot-token'];
   const headerToken = Array.isArray(provided) ? provided[0] : provided;
-  if (!tokenOk(headerToken)) {
+  if (!tokenOk(headerToken, config.askToken)) {
     sendJsonError(res, 401, 'missing or invalid token', 'unauthorized');
     return;
   }
@@ -234,7 +240,7 @@ const server = createServer(async (req, res) => {
   try {
     const body = await readBody(req);
     const parsed = JSON.parse(body) as { messages?: unknown };
-    messages = pinSystemPrompt(validateMessages(parsed.messages), SYSTEM_PROMPT);
+    messages = pinSystemPrompt(validateMessages(parsed.messages), config.systemPrompt);
   } catch (e) {
     if (!res.writableEnded) {
       const tooLarge = (e as Error).message === 'payload too large';
@@ -266,12 +272,13 @@ const server = createServer(async (req, res) => {
 
   try {
     for await (const delta of streamChat({
-      apiKey: KEY,
-      model: MODEL,
+      apiKey: upstream.apiKey,
+      model: upstream.model,
       messages,
       signal: ac.signal,
       baseUrl: upstream.baseUrl,
       maxTokens: upstream.maxTokens,
+      maxTokenField: upstream.maxTokenField,
     })) {
       clearTimeout(stall);
       stall = armStall();
@@ -303,13 +310,36 @@ const server = createServer(async (req, res) => {
     clearTimeout(stall);
     res.off('close', onResClose);
   }
-});
+}
 
-server.listen(PORT, () => {
-  console.log(`mascot proxy listening on http://localhost:${PORT}`);
-  console.log(`  model:           ${MODEL}`);
-  console.log(`  upstream:        ${upstream.baseUrl}`);
-  console.log(`  allowed origins: ${ALLOWED.join(', ') || '(none)'}`);
-  console.log(`  rate limit:      ${RPM} req/min/ip`);
-  console.log(`  ask token:       ${ASK_TOKEN ? 'required' : 'off'}`);
-});
+export function startProxy(env: Record<string, string | undefined> = process.env): Server {
+  const upstream = resolveUpstream(env);
+  if (!upstream.apiKey) {
+    console.warn('⚠ no API key set — /api/ask will return 503.');
+  }
+  const port = Number(env.PORT ?? 8787);
+  const server = createProxyServer(env);
+  server.listen(port, () => {
+    const askToken = env.ASK_TOKEN ?? '';
+    const allowed = (env.ALLOWED_ORIGINS ?? '*')
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+    const rpm = Number(env.RATE_LIMIT_RPM ?? 20);
+    console.log(`mascot proxy listening on http://localhost:${port}`);
+    console.log(`  model:           ${upstream.model}`);
+    console.log(`  upstream:        ${upstream.baseUrl}`);
+    console.log(`  allowed origins: ${allowed.join(', ') || '(none)'}`);
+    console.log(`  rate limit:      ${rpm} req/min/ip`);
+    console.log(`  ask token:       ${askToken ? 'required' : 'off'}`);
+  });
+  return server;
+}
+
+function invokedDirectly(): boolean {
+  const entry = process.argv[1];
+  if (!entry) return false;
+  return import.meta.url === pathToFileURL(resolve(entry)).href;
+}
+
+if (invokedDirectly()) startProxy();

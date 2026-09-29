@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { pinSystemPrompt, resolveUpstream } from '../src/upstream.js';
+import { maxTokenFieldFor, pinSystemPrompt, resolveUpstream } from '../src/upstream.js';
 
 describe('resolveUpstream', () => {
   it('defaults to OpenAI when an OpenAI key is set', () => {
@@ -29,6 +29,19 @@ describe('resolveUpstream', () => {
 
   it('omits max_tokens when OPENAI_MAX_TOKENS is 0', () => {
     expect(resolveUpstream({ OPENAI_API_KEY: 'sk', OPENAI_MAX_TOKENS: '0' }).maxTokens).toBeUndefined();
+  });
+
+  it('uses max_completion_tokens for o-series and gpt-5, and max_tokens otherwise', () => {
+    expect(maxTokenFieldFor('gpt-4o-mini', 'https://api.openai.com/v1')).toBe('max_tokens');
+    expect(maxTokenFieldFor('gpt-5', 'https://api.openai.com/v1')).toBe('max_completion_tokens');
+    expect(maxTokenFieldFor('o3-mini', 'https://api.openai.com/v1')).toBe('max_completion_tokens');
+    expect(maxTokenFieldFor('gpt-5', 'https://api.x.ai/v1')).toBe('max_tokens');
+    expect(maxTokenFieldFor('gpt-4o-mini', 'https://api.openai.com/v1', 'max_completion_tokens')).toBe(
+      'max_completion_tokens',
+    );
+    expect(resolveUpstream({ OPENAI_API_KEY: 'sk', OPENAI_MODEL: 'gpt-5' }).maxTokenField).toBe(
+      'max_completion_tokens',
+    );
   });
 });
 

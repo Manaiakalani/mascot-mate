@@ -51,6 +51,8 @@ export default defineConfig({
   },
   plugins: [copyMascotSprites()],
   server: {
+    port: 5174,
+    strictPort: true,
     open: '/demo/index.html',
     // Prevent stale browser cache when sprite sheets / maps are rebuilt.
     headers: {

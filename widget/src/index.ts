@@ -414,6 +414,18 @@ class MascotImpl implements MascotInstance {
   }
 
   async ask(q: string): Promise<string> {
+    if (!this.opts.endpoint.trim()) {
+      const err = new MascotError(
+        'bad_request',
+        'This demo has no chat proxy. Run the local server from the README, then point the widget at it.',
+      );
+      this.balloon.show();
+      this.setBubbleExpanded(true);
+      this.balloon.showError(err.message, { retryable: false });
+      this.repositionBubble();
+      throw err;
+    }
+
     if (q.length > MAX_MESSAGE_CHARS) {
       const err = new MascotError(
         'bad_request',

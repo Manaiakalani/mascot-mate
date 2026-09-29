@@ -8,10 +8,9 @@ mascot into the corner of any page, lets the visitor ask questions, and
 streams answers back from your own OpenAI-compatible proxy. Three swappable
 mascots — Clippy, Ninja Cat, and Bob — meet your OpenAI proxy.
 
-**Live demo:** <https://manaiakalani.github.io/mascot-mate/> — the three
-mascots, drag, and the ask bubble. GitHub Pages does not host the chat
-proxy, so a question there only reaches a server you are running on
-`localhost:8787`.
+**Live demo:** <https://manaiakalani.github.io/mascot-mate/> — Clippy, Ninja
+Cat, and Bob, with drag and the ask bubble. That build is a sprite demo:
+it does not call a chat proxy. Questions work from the local quick start.
 
 ```
 ┌────────────────────────────────────────────────────┐
@@ -32,10 +31,10 @@ proxy, so a question there only reaches a server you are running on
 - **Drag to reposition** with localStorage persistence.
 - **Defaults to bottom-right** across desktop, tablet, mobile, iOS notches,
   and Android gesture bars (uses `env(safe-area-inset-*)`).
-- **Accessible** — `role=dialog` bubble with focus trap + ESC, `aria-live`
-  streaming text, keyboard shortcuts (Enter / Space on the mascot, `/` to
-  focus), reduced-motion support, axe-core clean (no critical/serious
-  violations).
+- **Accessible** — non-modal `role=dialog` bubble (Escape closes it, Tab
+  can leave), `aria-live` streaming text, keyboard shortcuts (Enter / Space
+  on the mascot, `/` to focus), reduced-motion support, axe-core clean (no
+  critical/serious violations).
 - **Robust error handling** — typed errors (`rate_limit` / `unauthorized`
   / `network` / `timeout` / `server` / `aborted`), inline retry button,
   per-kind friendly copy, structured `{error, kind}` envelopes from the
@@ -54,8 +53,8 @@ npm run dev:server               # proxy on :8787
 npm run dev:widget               # demo page on :5174
 ```
 
-Open <http://localhost:5174>, click the mascot, ask anything. The same
-page is published at <https://manaiakalani.github.io/mascot-mate/>.
+Open <http://localhost:5174>, click the mascot, ask anything. The sprite
+demo is published at <https://manaiakalani.github.io/mascot-mate/>.
 
 ## 📦 Embedding on any site
 
@@ -97,7 +96,8 @@ window.Mascot.show();
 | `XAI_API_KEY`        |                | xAI key. Used when `OPENAI_API_KEY` is unset, or with an xAI base URL. |
 | `OPENAI_BASE_URL`    | OpenAI or xAI  | Chat-completions origin. `https://api.x.ai/v1` selects xAI.          |
 | `OPENAI_MODEL`       | `gpt-4o-mini`  | `grok-4.7` when the upstream is xAI and this is unset.               |
-| `OPENAI_MAX_TOKENS`  | `512`          | Completion cap. `0` omits `max_tokens`.                              |
+| `OPENAI_MAX_TOKENS`  | `512`          | Completion cap. `0` omits the limit.                                 |
+| `OPENAI_MAX_TOKEN_FIELD` |            | `max_tokens` or `max_completion_tokens`. Unset uses `max_completion_tokens` for `o`-series and `gpt-5` models, and `max_tokens` otherwise (including xAI). |
 | `OPENAI_TIMEOUT_MS`  | `45000`        | Abort if the upstream sends no bytes for this long.                  |
 | `ASK_TOKEN`          |                | When set, `POST /api/ask` must send header `x-mascot-token`.         |
 | `SYSTEM_PROMPT`      |                | When set, replaces any system turn from the browser.                 |
@@ -156,6 +156,9 @@ The proxy has its own unit tests in `server/`:
 ```bash
 cd server && npm test
 ```
+
+`npm test` from the repo root runs both suites. GitHub Actions runs that
+before the Pages deploy.
 
 ## 🤔 Why a proxy?
 

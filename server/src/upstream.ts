@@ -9,12 +9,16 @@ import type { OpenAIMessage } from './openai.js';
 const XAI_BASE = 'https://api.x.ai/v1';
 const OPENAI_BASE = 'https://api.openai.com/v1';
 
+export type MaxTokenField = 'max_tokens' | 'max_completion_tokens';
+
 export interface UpstreamConfig {
   apiKey: string;
   baseUrl: string;
   model: string;
   /** Omitted from the request when undefined. */
   maxTokens?: number;
+  /** Which JSON field carries `maxTokens`. */
+  maxTokenField: MaxTokenField;
   /** Stall timeout: abort if the upstream sends no bytes for this long. */
   timeoutMs: number;
 }
@@ -32,8 +36,21 @@ export function resolveUpstream(env: Record<string, string | undefined>): Upstre
     baseUrl,
     model,
     maxTokens: parseMaxTokens(env.OPENAI_MAX_TOKENS),
+    maxTokenField: maxTokenFieldFor(model, baseUrl, env.OPENAI_MAX_TOKEN_FIELD),
     timeoutMs: positiveInt(env.OPENAI_TIMEOUT_MS, 45_000),
   };
+}
+
+/**
+ * `gpt-4o-mini` and xAI still take `max_tokens`. OpenAI's o-series and gpt-5
+ * models reject that field and want `max_completion_tokens`. An explicit
+ * `OPENAI_MAX_TOKEN_FIELD` wins over the guess.
+ */
+export function maxTokenFieldFor(model: string, baseUrl: string, override?: string): MaxTokenField {
+  if (override === 'max_tokens' || override === 'max_completion_tokens') return override;
+  if (/\/\/api\.x\.ai(?:\/|$)/.test(baseUrl)) return 'max_tokens';
+  if (/^(?:o\d|gpt-5)(?:[.\-]|$)/i.test(model.trim())) return 'max_completion_tokens';
+  return 'max_tokens';
 }
 
 /**
