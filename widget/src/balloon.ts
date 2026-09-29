@@ -203,6 +203,8 @@ export class Balloon {
 
   appendText(s: string): void {
     this.textEl.textContent = (this.textEl.textContent ?? '') + s;
+    // Long answers scroll inside the bubble. Keep the newest line in view.
+    this.textEl.scrollTop = this.textEl.scrollHeight;
   }
 
   /**

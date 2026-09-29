@@ -8,6 +8,11 @@ mascot into the corner of any page, lets the visitor ask questions, and
 streams answers back from your own OpenAI-compatible proxy. Three swappable
 mascots — Clippy, Ninja Cat, and Bob — meet your OpenAI proxy.
 
+**Live demo:** <https://manaiakalani.github.io/mascot-mate/> — the three
+mascots, drag, and the ask bubble. GitHub Pages does not host the chat
+proxy, so a question there only reaches a server you are running on
+`localhost:8787`.
+
 ```
 ┌────────────────────────────────────────────────────┐
 │  mascot-mate/                                      │
@@ -49,7 +54,8 @@ npm run dev:server               # proxy on :8787
 npm run dev:widget               # demo page on :5174
 ```
 
-Open <http://localhost:5174>, click the mascot, ask anything.
+Open <http://localhost:5174>, click the mascot, ask anything. The same
+page is published at <https://manaiakalani.github.io/mascot-mate/>.
 
 ## 📦 Embedding on any site
 
@@ -85,13 +91,19 @@ window.Mascot.show();
 
 ### Server (env vars)
 
-| Var                 | Default        | Notes                                        |
-|---------------------|----------------|----------------------------------------------|
-| `OPENAI_API_KEY`    | (required)     | Your OpenAI key. Stays server-side.          |
-| `OPENAI_MODEL`      | `gpt-4o-mini`  | Any chat-completions model id.               |
-| `ALLOWED_ORIGINS`   | `*`            | Comma-separated CORS allow-list, or `*`.     |
-| `RATE_LIMIT_RPM`    | `20`           | Requests per minute, per IP (token bucket).  |
-| `PORT`              | `8787`         |                                              |
+| Var                  | Default        | Notes                                                                 |
+|----------------------|----------------|-----------------------------------------------------------------------|
+| `OPENAI_API_KEY`     |                | OpenAI key. Stays server-side. Required unless `XAI_API_KEY` is set. |
+| `XAI_API_KEY`        |                | xAI key. Used when `OPENAI_API_KEY` is unset, or with an xAI base URL. |
+| `OPENAI_BASE_URL`    | OpenAI or xAI  | Chat-completions origin. `https://api.x.ai/v1` selects xAI.          |
+| `OPENAI_MODEL`       | `gpt-4o-mini`  | `grok-4.7` when the upstream is xAI and this is unset.               |
+| `OPENAI_MAX_TOKENS`  | `512`          | Completion cap. `0` omits `max_tokens`.                              |
+| `OPENAI_TIMEOUT_MS`  | `45000`        | Abort if the upstream sends no bytes for this long.                  |
+| `ASK_TOKEN`          |                | When set, `POST /api/ask` must send header `x-mascot-token`.         |
+| `SYSTEM_PROMPT`      |                | When set, replaces any system turn from the browser.                 |
+| `ALLOWED_ORIGINS`    | `*`            | Comma-separated CORS allow-list, or `*`.                             |
+| `RATE_LIMIT_RPM`     | `20`           | Requests per minute, per IP (token bucket).                          |
+| `PORT`               | `8787`         |                                                                       |
 
 ### Widget (`<script>` data-attrs)
 
@@ -100,7 +112,8 @@ window.Mascot.show();
 | `data-endpoint`   | URL of `/api/ask`. Required for auto-mount.    |
 | `data-mascot`     | `clippy` (default) / `ninjacat` / `bob`.       |
 | `data-greeting`   | Initial speech-bubble text.                    |
-| `data-system`     | System prompt sent to the model.               |
+| `data-system`     | System prompt sent to the model. Ignored when the proxy sets `SYSTEM_PROMPT`. |
+| `data-token`      | Shared secret for `ASK_TOKEN`. Anyone who can load the page can read it. |
 
 ## 🎨 Adding a mascot
 
@@ -147,13 +160,14 @@ cd server && npm test
 ## 🤔 Why a proxy?
 
 Putting your OpenAI key in the browser is a one-way ticket to a six-figure
-bill. The included `server/` is a tiny Node 20+ service (~150 lines, zero
-runtime deps) that:
+bill. The included `server/` is a small Node 20+ service (`dotenv` is its
+only runtime dependency) that:
 
-- streams chat completions from OpenAI as SSE tokens,
-- enforces a CORS allow-list,
+- streams chat completions as SSE tokens,
+- enforces a CORS allow-list and an optional shared token,
 - rate-limits per IP via token bucket,
-- caps payload + message count,
+- caps payload, message count, and completion length,
+- times out a stalled upstream and does not forward provider error bodies,
 - emits typed JSON envelopes (`{ error, kind }`) so the widget can render
   per-error-kind UI.
 

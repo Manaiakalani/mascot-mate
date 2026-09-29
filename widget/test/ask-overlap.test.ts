@@ -80,4 +80,28 @@ describe('MascotImpl.ask() overlap handling', () => {
 
     instance.destroy();
   });
+
+  it('hide() aborts an in-flight ask without reopening the bubble', async () => {
+    globalThis.fetch = (async (_url: string, opts?: RequestInit) =>
+      new Promise<Response>((_resolve, reject) => {
+        opts?.signal?.addEventListener('abort', () => {
+          reject(new DOMException('aborted', 'AbortError'));
+        });
+      })) as unknown as typeof fetch;
+
+    const instance = await init({ endpoint: '/x', mascot: 'clippy', parent: container });
+    const pending = instance.ask('Question A');
+    await new Promise((r) => setTimeout(r, 0));
+    const hidden = instance.hide();
+    await expect(pending).rejects.toThrow();
+    await hidden;
+
+    let open = false;
+    for (const host of container.children) {
+      const balloon = (host as HTMLElement).shadowRoot?.querySelector('.balloon');
+      if (balloon?.classList.contains('show')) open = true;
+    }
+    expect(open).toBe(false);
+    instance.destroy();
+  }, 15_000);
 });

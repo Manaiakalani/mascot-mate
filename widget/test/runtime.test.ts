@@ -53,6 +53,56 @@ describe('ActionQueue', () => {
     expect(q.isBusy()).toBe(false);
   });
 
+  it('a weight-100 backward branch finishes instead of looping forever', async () => {
+    vi.useFakeTimers();
+    try {
+      const loopMap: MascotMap = {
+        framesize: [1, 1],
+        overlayCount: 1,
+        animations: {
+          Loop: {
+            frames: [
+              { duration: 10 },
+              {
+                duration: 10,
+                exitBranch: 2,
+                branching: { branches: [{ frameIndex: 0, weight: 100 }] },
+              },
+              { duration: 10 },
+            ],
+          },
+        },
+      };
+      const r = makeRenderer();
+      const q = new ActionQueue(loopMap, r);
+      q.play('Loop');
+      await vi.runAllTimersAsync();
+      expect(q.isBusy()).toBe(false);
+      expect(r.showFrame.mock.calls.length).toBeGreaterThan(0);
+      expect(r.showFrame.mock.calls.length).toBeLessThan(40);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('playNow interrupts and whenIdle resolves when the queue drains', async () => {
+    vi.useFakeTimers();
+    try {
+      const r = makeRenderer();
+      const q = new ActionQueue(map, r);
+      q.play('A');
+      q.playNow('B');
+      const idle = q.whenIdle();
+      await vi.runAllTimersAsync();
+      await idle;
+      expect(q.isBusy()).toBe(false);
+      const last = r.showFrame.mock.calls.at(-1)?.[0] as { images?: number[][] };
+      expect(last.images).toEqual([[0, 10]]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('isBusy() false after stop()', async () => {
     const r = makeRenderer();
     const q = new ActionQueue(map, r);

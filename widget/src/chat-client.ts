@@ -12,12 +12,41 @@ export interface ChatMessage {
   content: string;
 }
 
+/** Server rejects bodies above this. Stay under it on the client. */
+export const MAX_CHAT_MESSAGES = 32;
+export const MAX_MESSAGE_CHARS = 4000;
+/** No bytes for this long means the upstream is hung. */
+export const DEFAULT_STALL_MS = 45_000;
+
 export interface AskOptions {
   endpoint: string;
   messages: ChatMessage[];
   signal?: AbortSignal;
+  /** Override the stall timeout. Tests use a few milliseconds. */
+  stallMs?: number;
+  /** Sent as `x-mascot-token` when the proxy requires `ASK_TOKEN`. */
+  token?: string;
   onToken: (delta: string) => void;
   onError?: (err: Error) => void;
+}
+
+/**
+ * Keep the system prompt plus the newest turns. The proxy rejects a history
+ * longer than its message cap, which used to fail every later question.
+ */
+export function trimChatHistory(messages: ChatMessage[], max = MAX_CHAT_MESSAGES): ChatMessage[] {
+  if (messages.length <= max) return messages;
+  const keepSystem = messages[0]?.role === 'system';
+  const head = keepSystem ? [messages[0]!] : [];
+  const tail = messages.slice(keepSystem ? 1 : 0).slice(-(max - head.length));
+  return head.concat(tail);
+}
+
+/** Copy with each turn clipped to the proxy's per-message character cap. */
+export function clampMessageChars(messages: ChatMessage[], maxChars = MAX_MESSAGE_CHARS): ChatMessage[] {
+  return messages.map((message) =>
+    message.content.length > maxChars ? { ...message, content: message.content.slice(0, maxChars) } : message,
+  );
 }
 
 export type MascotErrorKind =
@@ -134,17 +163,110 @@ function classifyThrown(e: unknown): MascotError {
   return new MascotError('unknown', msg, { cause: e });
 }
 
+function splitSse(buf: string, flush: boolean): { events: string[]; rest: string } {
+  const events: string[] = [];
+  let rest = buf;
+  for (;;) {
+    const idx = rest.indexOf('\n\n');
+    if (idx < 0) break;
+    events.push(rest.slice(0, idx));
+    rest = rest.slice(idx + 2);
+  }
+  // Streams often close on the last `data:` line without a blank terminator.
+  if (flush && rest.trim()) {
+    events.push(rest);
+    rest = '';
+  }
+  return { events, rest };
+}
+
+function errorText(error: unknown): string {
+  if (typeof error === 'string' && error) return error;
+  if (error && typeof error === 'object' && 'message' in error) {
+    const message = (error as { message?: unknown }).message;
+    if (typeof message === 'string' && message) return message;
+  }
+  return 'upstream error';
+}
+
+function applyEvent(event: string, opts: AskOptions, state: { full: string }): 'done' | 'continue' {
+  const line = event.split('\n').find((l) => l.startsWith('data:'));
+  if (!line) return 'continue';
+  const payload = line.slice(5).trim();
+  if (!payload) return 'continue';
+  if (payload === '[DONE]') return 'done';
+  let parsed: { delta?: string; error?: unknown; kind?: string };
+  try {
+    parsed = JSON.parse(payload) as typeof parsed;
+  } catch (e) {
+    opts.onError?.(e as Error);
+    return 'continue';
+  }
+  if (parsed.error) {
+    const kind =
+      parsed.kind && KNOWN_KINDS.has(parsed.kind as MascotErrorKind)
+        ? (parsed.kind as MascotErrorKind)
+        : 'server';
+    throw new MascotError(kind, errorText(parsed.error));
+  }
+  if (parsed.delta) {
+    state.full += parsed.delta;
+    opts.onToken(parsed.delta);
+  }
+  return 'continue';
+}
+
+function readChunk(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  stallMs: number,
+  external?: AbortSignal,
+): Promise<ReadableStreamReadResult<Uint8Array>> {
+  if (external?.aborted) return Promise.reject(new MascotError('aborted', 'request aborted'));
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new MascotError('timeout', 'response timed out'));
+    }, stallMs);
+    const onAbort = (): void => reject(new MascotError('aborted', 'request aborted'));
+    external?.addEventListener('abort', onAbort, { once: true });
+    reader.read().then(
+      (value) => {
+        clearTimeout(timer);
+        external?.removeEventListener('abort', onAbort);
+        resolve(value);
+      },
+      (error: unknown) => {
+        clearTimeout(timer);
+        external?.removeEventListener('abort', onAbort);
+        reject(classifyThrown(error));
+      },
+    );
+  });
+}
+
 export async function askStreaming(opts: AskOptions): Promise<string> {
+  const stallMs = opts.stallMs ?? DEFAULT_STALL_MS;
+  const ac = new AbortController();
+  const onExternal = (): void => ac.abort();
+  opts.signal?.addEventListener('abort', onExternal);
+  const fetchTimer = setTimeout(() => ac.abort(), stallMs);
   let res: Response;
   try {
     res = await fetch(opts.endpoint, {
       method: 'POST',
-      headers: { 'content-type': 'application/json', accept: 'text/event-stream' },
+      headers: {
+        'content-type': 'application/json',
+        accept: 'text/event-stream',
+        ...(opts.token ? { 'x-mascot-token': opts.token } : {}),
+      },
       body: JSON.stringify({ messages: opts.messages }),
-      signal: opts.signal,
+      signal: ac.signal,
     });
   } catch (e) {
+    if (opts.signal?.aborted) throw new MascotError('aborted', 'request aborted');
+    if (ac.signal.aborted) throw new MascotError('timeout', 'response timed out');
     throw classifyThrown(e);
+  } finally {
+    clearTimeout(fetchTimer);
   }
   if (!res.ok || !res.body) {
     const text = await safeText(res);
@@ -164,43 +286,39 @@ export async function askStreaming(opts: AskOptions): Promise<string> {
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
   let buf = '';
-  let full = '';
+  const state = { full: '' };
 
-  while (true) {
-    let chunk: ReadableStreamReadResult<Uint8Array>;
-    try {
-      chunk = await reader.read();
-    } catch (e) {
-      throw classifyThrown(e);
-    }
-    if (chunk.done) break;
-    buf += decoder.decode(chunk.value, { stream: true });
-
-    let idx: number;
-    while ((idx = buf.indexOf('\n\n')) >= 0) {
-      const event = buf.slice(0, idx);
-      buf = buf.slice(idx + 2);
-      const line = event.split('\n').find((l) => l.startsWith('data:'));
-      if (!line) continue;
-      const payload = line.slice(5).trim();
-      if (payload === '[DONE]') return full;
-      let parsed: { delta?: string; error?: string; kind?: MascotErrorKind };
+  try {
+    while (true) {
+      let chunk: ReadableStreamReadResult<Uint8Array>;
       try {
-        parsed = JSON.parse(payload) as typeof parsed;
+        chunk = await readChunk(reader, stallMs, opts.signal);
       } catch (e) {
-        opts.onError?.(e as Error);
-        continue;
+        if (e instanceof MascotError) throw e;
+        throw classifyThrown(e);
       }
-      if (parsed.error) {
-        throw new MascotError(parsed.kind ?? 'server', parsed.error);
+      if (chunk.done) {
+        buf += decoder.decode();
+        const tail = splitSse(buf, true);
+        for (const event of tail.events) {
+          if (applyEvent(event, opts, state) === 'done') return state.full;
+        }
+        break;
       }
-      if (parsed.delta) {
-        full += parsed.delta;
-        opts.onToken(parsed.delta);
+      buf += decoder.decode(chunk.value, { stream: true });
+      const split = splitSse(buf, false);
+      buf = split.rest;
+      for (const event of split.events) {
+        if (applyEvent(event, opts, state) === 'done') return state.full;
       }
     }
+  } catch (e) {
+    void reader.cancel().catch(() => {});
+    throw e;
+  } finally {
+    opts.signal?.removeEventListener('abort', onExternal);
   }
-  return full;
+  return state.full;
 }
 
 async function safeText(res: Response): Promise<string> {

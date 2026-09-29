@@ -4,12 +4,14 @@
  * per-IP rate limiting included. No external web framework.
  */
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
+import { timingSafeEqual } from 'node:crypto';
 import { config as loadEnv } from 'dotenv';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 import { existsSync } from 'node:fs';
-import { streamChat, type OpenAIMessage } from './openai.js';
+import { streamChat, UpstreamError, type OpenAIMessage } from './openai.js';
 import { TokenBucket } from './rate-limit.js';
+import { pinSystemPrompt, resolveUpstream } from './upstream.js';
 
 // Load .env from server/ first, then fall back to monorepo root.
 const here = dirname(fileURLToPath(import.meta.url));
@@ -25,8 +27,11 @@ for (const p of [
 }
 
 const PORT = Number(process.env.PORT ?? 8787);
-const MODEL = process.env.OPENAI_MODEL ?? 'gpt-4o-mini';
-const KEY = process.env.OPENAI_API_KEY ?? '';
+const upstream = resolveUpstream(process.env);
+const KEY = upstream.apiKey;
+const MODEL = upstream.model;
+const ASK_TOKEN = process.env.ASK_TOKEN ?? '';
+const SYSTEM_PROMPT = process.env.SYSTEM_PROMPT;
 const ALLOWED = (process.env.ALLOWED_ORIGINS ?? '*')
   .split(',')
   .map((s) => s.trim())
@@ -83,6 +88,17 @@ function sendJsonError(
     for (const [name, value] of Object.entries(headers)) res.setHeader(name, value);
   }
   res.end(JSON.stringify({ error, kind }));
+}
+
+function tokenOk(header: string | undefined): boolean {
+  if (!ASK_TOKEN) return true;
+  const got = Buffer.from(header ?? '');
+  const expect = Buffer.from(ASK_TOKEN);
+  if (got.length !== expect.length) {
+    timingSafeEqual(expect, expect);
+    return false;
+  }
+  return timingSafeEqual(got, expect);
 }
 
 function clientIp(req: IncomingMessage): string {
@@ -189,19 +205,28 @@ const server = createServer(async (req, res) => {
     return;
   }
 
-  const ip = clientIp(req);
-  if (!limiter.take(ip)) {
-    sendJsonError(res, 429, 'rate limit exceeded', 'rate_limit', { 'retry-after': '5' });
-    return;
-  }
-
   if (!KEY) {
     sendJsonError(
       res,
       503,
-      'server is missing OPENAI_API_KEY — the assistant is not configured',
+      'server is missing an API key — the assistant is not configured',
       'unauthorized',
     );
+    return;
+  }
+
+  const ip = clientIp(req);
+  if (!limiter.take(ip)) {
+    sendJsonError(res, 429, 'rate limit exceeded', 'rate_limit', {
+      'retry-after': String(limiter.retryAfter(ip)),
+    });
+    return;
+  }
+
+  const provided = req.headers['x-mascot-token'];
+  const headerToken = Array.isArray(provided) ? provided[0] : provided;
+  if (!tokenOk(headerToken)) {
+    sendJsonError(res, 401, 'missing or invalid token', 'unauthorized');
     return;
   }
 
@@ -209,10 +234,12 @@ const server = createServer(async (req, res) => {
   try {
     const body = await readBody(req);
     const parsed = JSON.parse(body) as { messages?: unknown };
-    messages = validateMessages(parsed.messages);
+    messages = pinSystemPrompt(validateMessages(parsed.messages), SYSTEM_PROMPT);
   } catch (e) {
     if (!res.writableEnded) {
-      sendJsonError(res, 400, (e as Error).message, 'bad_request');
+      const tooLarge = (e as Error).message === 'payload too large';
+      const message = e instanceof SyntaxError ? 'request body must be JSON' : (e as Error).message;
+      sendJsonError(res, tooLarge ? 413 : 400, message, 'bad_request');
     }
     return;
   }
@@ -220,33 +247,69 @@ const server = createServer(async (req, res) => {
   sse(res);
 
   const ac = new AbortController();
-  req.on('close', () => ac.abort());
+  let clientClosed = false;
+  let timedOut = false;
+  let settled = false;
+  const armStall = (): ReturnType<typeof setTimeout> =>
+    setTimeout(() => {
+      timedOut = true;
+      ac.abort();
+    }, upstream.timeoutMs);
+  let stall = armStall();
+  const onResClose = (): void => {
+    if (settled || res.writableFinished) return;
+    clientClosed = true;
+    clearTimeout(stall);
+    ac.abort();
+  };
+  res.on('close', onResClose);
 
   try {
-    for await (const delta of streamChat({ apiKey: KEY, model: MODEL, messages, signal: ac.signal })) {
+    for await (const delta of streamChat({
+      apiKey: KEY,
+      model: MODEL,
+      messages,
+      signal: ac.signal,
+      baseUrl: upstream.baseUrl,
+      maxTokens: upstream.maxTokens,
+    })) {
+      clearTimeout(stall);
+      stall = armStall();
       sseSend(res, { delta });
     }
+    settled = true;
     sseDone(res);
   } catch (e) {
+    clearTimeout(stall);
     // If the client already disconnected, don't attempt to write to the
     // destroyed socket — it's pointless and would throw.
-    if (ac.signal.aborted) return;
-    const msg = (e as Error).message || 'upstream error';
-    // Best-effort classification of upstream failures for the client.
-    let kind: 'unauthorized' | 'rate_limit' | 'server' = 'server';
-    if (/401|invalid[_ -]?api[_ -]?key|incorrect api key|unauthorized/i.test(msg)) {
-      kind = 'unauthorized';
-    } else if (/429|rate[_ -]?limit/i.test(msg)) {
-      kind = 'rate_limit';
+    if (clientClosed || res.writableEnded) return;
+    settled = true;
+    if (timedOut) {
+      sseSend(res, { error: 'upstream timed out', kind: 'timeout' });
+      sseDone(res);
+      return;
     }
-    sseSend(res, { error: msg, kind });
+    const kind = e instanceof UpstreamError ? e.kind : 'server';
+    const error =
+      kind === 'unauthorized'
+        ? 'upstream rejected the API key'
+        : kind === 'rate_limit'
+          ? 'upstream rate limit'
+          : 'upstream request failed';
+    sseSend(res, { error, kind });
     sseDone(res);
+  } finally {
+    clearTimeout(stall);
+    res.off('close', onResClose);
   }
 });
 
 server.listen(PORT, () => {
   console.log(`mascot proxy listening on http://localhost:${PORT}`);
   console.log(`  model:           ${MODEL}`);
+  console.log(`  upstream:        ${upstream.baseUrl}`);
   console.log(`  allowed origins: ${ALLOWED.join(', ') || '(none)'}`);
   console.log(`  rate limit:      ${RPM} req/min/ip`);
+  console.log(`  ask token:       ${ASK_TOKEN ? 'required' : 'off'}`);
 });
