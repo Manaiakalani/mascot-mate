@@ -50,6 +50,26 @@ describe('streamChat', () => {
     expect(JSON.parse(body)).toMatchObject({ model: 'grok-4.7', max_tokens: 128, stream: true });
   });
 
+  it('sends max_completion_tokens when asked', async () => {
+    let body = '';
+    globalThis.fetch = (async (_input: string | URL | Request, init?: RequestInit) => {
+      body = String(init?.body ?? '');
+      return sse(['data: {"choices":[{"delta":{"content":"ok"}}]}\n\n', 'data: [DONE]\n\n']);
+    }) as typeof fetch;
+    await collect(
+      streamChat({
+        apiKey: 'k',
+        model: 'gpt-5',
+        maxTokens: 64,
+        maxTokenField: 'max_completion_tokens',
+        messages: [{ role: 'user', content: 'hi' }],
+      }),
+    );
+    const posted = JSON.parse(body) as { max_tokens?: number; max_completion_tokens?: number };
+    expect(posted.max_completion_tokens).toBe(64);
+    expect(posted.max_tokens).toBeUndefined();
+  });
+
   it('yields a trailing data line that has no blank terminator', async () => {
     globalThis.fetch = (async () =>
       sse([

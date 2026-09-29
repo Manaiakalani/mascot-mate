@@ -8,7 +8,7 @@
     "build:widget": "npm run build -w widget",
     "dev:server": "npm run dev -w server",
     "build": "npm run build -w widget && npm run build -w server",
-    "lint": "eslint . --ext .ts",
+    "lint": "eslint .",
     "test": "npm run test -w widget && npm run test -w server"
   },
   "devDependencies": {
@@ -16,5 +16,9 @@
     "eslint": "^9.9.0",
     "@typescript-eslint/parser": "^8.2.0",
     "@typescript-eslint/eslint-plugin": "^8.2.0"
+  },
+  "overrides": {
+    "brace-expansion@^1.1.7": "1.1.21",
+    "brace-expansion@^5.0.5": "5.0.12"
   }
 }

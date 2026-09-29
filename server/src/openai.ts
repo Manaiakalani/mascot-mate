@@ -31,6 +31,7 @@ export async function* streamChat(opts: {
   signal?: AbortSignal;
   baseUrl?: string;
   maxTokens?: number;
+  maxTokenField?: 'max_tokens' | 'max_completion_tokens';
 }): AsyncGenerator<string, void, void> {
   const base = (opts.baseUrl ?? 'https://api.openai.com/v1').replace(/\/$/, '');
   const body: Record<string, unknown> = {
@@ -38,7 +39,9 @@ export async function* streamChat(opts: {
     messages: opts.messages,
     stream: true,
   };
-  if (opts.maxTokens && opts.maxTokens > 0) body.max_tokens = opts.maxTokens;
+  if (opts.maxTokens && opts.maxTokens > 0) {
+    body[opts.maxTokenField ?? 'max_tokens'] = opts.maxTokens;
+  }
 
   const res = await fetch(`${base}/chat/completions`, {
     method: 'POST',

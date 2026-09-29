@@ -104,4 +104,24 @@ describe('MascotImpl.ask() overlap handling', () => {
     expect(open).toBe(false);
     instance.destroy();
   }, 15_000);
+
+  it('blank endpoint explains that the demo has no proxy and does not fetch', async () => {
+    let fetched = false;
+    globalThis.fetch = (async () => {
+      fetched = true;
+      throw new Error('should not fetch');
+    }) as typeof fetch;
+
+    const instance = await init({ endpoint: '  ', mascot: 'clippy', parent: container });
+    await expect(instance.ask('hi')).rejects.toThrow(/no chat proxy/);
+    expect(fetched).toBe(false);
+
+    let text = '';
+    for (const host of container.children) {
+      const el = (host as HTMLElement).shadowRoot?.querySelector('.text');
+      if (el?.textContent) text = el.textContent;
+    }
+    expect(text).toMatch(/no chat proxy/);
+    instance.destroy();
+  });
 });
