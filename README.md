@@ -1,16 +1,16 @@
 # mascot-mate
 
+**Embeddable mascot widget** — Clippy, Ninja Cat, and Bob + OpenAI streaming.
+
 > Your friendly browser-side desktop assistant. Like Clippy, but
 > well-behaved on a 4K display and powered by an LLM you trust.
 
-`mascot-mate` is a tiny embeddable web widget that drops a fully animated
-mascot into the corner of any page, lets the visitor ask questions, and
-streams answers back from your own OpenAI-compatible proxy. Three swappable
-mascots — Clippy, Ninja Cat, and Bob — meet your OpenAI proxy.
+## What
 
-**Live demo:** <https://manaiakalani.github.io/mascot-mate/> — Clippy, Ninja
-Cat, and Bob, with drag and the ask bubble. That build is a sprite demo:
-it does not call a chat proxy. Questions work from the local quick start.
+A tiny vanilla-TS widget that drops a fully animated mascot into the
+corner of any page. Visitors ask questions; answers stream from your
+own OpenAI-compatible proxy. Three swappable mascots — Clippy, Ninja
+Cat, and Bob.
 
 ```
 ┌────────────────────────────────────────────────────┐
@@ -20,29 +20,36 @@ it does not call a chat proxy. Questions work from the local quick start.
 └────────────────────────────────────────────────────┘
 ```
 
+## Why
+
+The API key stays on the server. The mascot is one script tag (or
+`init()`). No telemetry, no tracking, no analytics.
+
+- **3 swappable mascots** with sprite-sheet animation (idle, greeting,
+  thinking, explain, celebrate, alert).
+- **Streaming answers** via Server-Sent Events from a tiny Node proxy.
+- **Drag to reposition** with `localStorage` persistence; defaults to
+  bottom-right, including iOS notches and Android gesture bars
+  (`env(safe-area-inset-*)`).
+- **Accessible** — non-modal `role=dialog` bubble (Escape closes it,
+  Tab can leave), `aria-live` streaming text, keyboard shortcuts
+  (Enter / Space on the mascot, `/` to focus), reduced-motion, axe-core
+  clean (no critical/serious violations).
+- **Hardened proxy** — CORS allow-list, per-IP token-bucket rate limit,
+  payload + message-count caps, typed `{error, kind}` envelopes, no key
+  in the browser.
+
+## Try it
+
+| Path | What you get |
+|------|----------------|
+| **[Live demo](https://manaiakalani.github.io/mascot-mate)** | Clippy, Ninja Cat, and Bob — drag, swap, greet. Sprite demo only: that build does not call a chat proxy. |
+| **[Quick start](#quick-start)** | Local widget + proxy. Click the mascot and ask anything. |
+| **[Embed](#embedding-on-any-site)** | One `<script>` tag on any site, pointed at your `/api/ask` proxy. |
+
 ---
 
-## ✨ Features
-
-- **3 swappable mascots** with full sprite-sheet animation engines (idle
-  rotation, greeting, thinking, explain, celebrate, alert).
-- **Streaming answers** — Server-Sent Events from a tiny Node proxy that
-  keeps your OpenAI key server-side.
-- **Drag to reposition** with localStorage persistence.
-- **Defaults to bottom-right** across desktop, tablet, mobile, iOS notches,
-  and Android gesture bars (uses `env(safe-area-inset-*)`).
-- **Accessible** — non-modal `role=dialog` bubble (Escape closes it, Tab
-  can leave), `aria-live` streaming text, keyboard shortcuts (Enter / Space
-  on the mascot, `/` to focus), reduced-motion support, axe-core clean (no
-  critical/serious violations).
-- **Robust error handling** — typed errors (`rate_limit` / `unauthorized`
-  / `network` / `timeout` / `server` / `aborted`), inline retry button,
-  per-kind friendly copy, structured `{error, kind}` envelopes from the
-  proxy.
-- **Hardened proxy** — CORS allow-list, per-IP token-bucket rate limit,
-  payload + message-count caps, no key in browser, ever.
-
-## 🚀 Quick start
+## Quick start
 
 ```bash
 git clone https://github.com/Manaiakalani/mascot-mate.git
@@ -53,10 +60,11 @@ npm run dev:server               # proxy on :8787
 npm run dev:widget               # demo page on :5174
 ```
 
-Open <http://localhost:5174>, click the mascot, ask anything. The sprite
-demo is published at <https://manaiakalani.github.io/mascot-mate/>.
+Open <http://localhost:5174>, click the mascot, ask anything. The
+sprite demo (no proxy) is at
+<https://manaiakalani.github.io/mascot-mate>.
 
-## 📦 Embedding on any site
+## Embedding on any site
 
 Build the widget:
 
@@ -77,7 +85,7 @@ runtime — only the active mascot's sheet is downloaded), then drop one tag:
 ```
 
 The widget auto-mounts, persists the user's mascot choice in
-`localStorage`, and exposes a programmatic API:
+`localStorage`, and exposes a programmatic API on `window.Mascot`:
 
 ```js
 window.Mascot.switchTo('ninjacat');     // or 'clippy' | 'bob'
@@ -86,7 +94,20 @@ window.Mascot.hide();
 window.Mascot.show();
 ```
 
-## 🔌 Configuration
+ESM hosts can import `init` from `mascot.js` instead of using the IIFE
+tag. Same options, same instance methods:
+
+```js
+import { init } from './mascot.js';
+
+const mascot = await init({
+  endpoint: 'https://your-proxy.example/api/ask',
+  mascot: 'clippy',
+  greeting: 'Hi! Ask me anything.',
+});
+```
+
+## Configuration
 
 ### Server (env vars)
 
@@ -115,7 +136,10 @@ window.Mascot.show();
 | `data-system`     | System prompt sent to the model. Ignored when the proxy sets `SYSTEM_PROMPT`. |
 | `data-token`      | Shared secret for `ASK_TOKEN`. Anyone who can load the page can read it. |
 
-## 🎨 Adding a mascot
+`init({ endpoint, mascot, greeting, systemPrompt, token })` accepts the
+same values as those attributes.
+
+## Adding a mascot
 
 A mascot is a folder following the **ClippyJS sprite-sheet format**:
 
@@ -135,7 +159,7 @@ Animation names the widget looks for (with sensible fallbacks):
 `Greeting`, `GoodBye`, `Thinking`, `Explain`, plus any `^Idle*` for the
 auto-rotation pool.
 
-## 🧪 Testing
+## Testing
 
 ```bash
 cd widget
@@ -160,7 +184,7 @@ cd server && npm test
 `npm test` from the repo root runs both suites. GitHub Actions runs that
 before the Pages deploy.
 
-## 🤔 Why a proxy?
+## Why a proxy?
 
 Putting your OpenAI key in the browser is a one-way ticket to a six-figure
 bill. The included `server/` is a small Node 20+ service (`dotenv` is its
@@ -172,11 +196,12 @@ only runtime dependency) that:
 - caps payload, message count, and completion length,
 - times out a stalled upstream and does not forward provider error bodies,
 - emits typed JSON envelopes (`{ error, kind }`) so the widget can render
-  per-error-kind UI.
+  per-error-kind UI (`rate_limit` / `unauthorized` / `network` /
+  `timeout` / `server` / `aborted`) with an inline retry button.
 
 Deploy it anywhere Node 20+ runs (Vercel, Fly, Render, Railway, etc.).
 
-## 🙋 About me
+## About me
 
 Built by [@Manaiakalani](https://github.com/Manaiakalani) over a few
 evenings as a love letter to the late-90s desktop assistants — the kind
