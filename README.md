@@ -5,6 +5,8 @@
 > Your friendly browser-side desktop assistant. Like Clippy, but
 > well-behaved on a 4K display and powered by an LLM you trust.
 
+![Mascot Mate sprite demo, with Clippy asking for a question](docs/screenshot.png)
+
 ## What
 
 A tiny vanilla-TS widget that drops a fully animated mascot into the
