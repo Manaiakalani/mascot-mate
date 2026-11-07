@@ -1,6 +1,6 @@
 # mascot-mate
 
-**Embeddable mascot widget** — Clippy, Ninja Cat, and Bob + OpenAI streaming.
+**Embeddable mascot widget**: Clippy, Ninja Cat, and Bob + OpenAI streaming.
 
 > Your friendly browser-side desktop assistant. Like Clippy, but
 > well-behaved on a 4K display and powered by an LLM you trust.
@@ -11,7 +11,7 @@
 
 A tiny vanilla-TS widget that drops a fully animated mascot into the
 corner of any page. Visitors ask questions; answers stream from your
-own OpenAI-compatible proxy. Three swappable mascots — Clippy, Ninja
+own OpenAI-compatible proxy. Three swappable mascots: Clippy, Ninja
 Cat, and Bob.
 
 ```
@@ -33,11 +33,11 @@ The API key stays on the server. The mascot is one script tag (or
 - **Drag to reposition** with `localStorage` persistence; defaults to
   bottom-right, including iOS notches and Android gesture bars
   (`env(safe-area-inset-*)`).
-- **Accessible** — non-modal `role=dialog` bubble (Escape closes it,
+- **Accessible**: non-modal `role=dialog` bubble (Escape closes it,
   Tab can leave), `aria-live` streaming text, keyboard shortcuts
   (Enter / Space on the mascot, `/` to focus), reduced-motion, axe-core
   clean (no critical/serious violations).
-- **Hardened proxy** — CORS allow-list, per-IP token-bucket rate limit,
+- **Hardened proxy**: CORS allow-list, per-IP token-bucket rate limit,
   payload + message-count caps, typed `{error, kind}` envelopes, no key
   in the browser.
 
@@ -45,7 +45,7 @@ The API key stays on the server. The mascot is one script tag (or
 
 | Path | What you get |
 |------|----------------|
-| **[Live demo](https://manaiakalani.github.io/mascot-mate)** | Clippy, Ninja Cat, and Bob — drag, swap, greet. Sprite demo only: that build does not call a chat proxy. |
+| **[Live demo](https://manaiakalani.github.io/mascot-mate)** | Clippy, Ninja Cat, and Bob: drag, swap, greet. Sprite demo only: that build does not call a chat proxy. |
 | **[Quick start](#quick-start)** | Local widget + proxy. Click the mascot and ask anything. |
 | **[Embed](#embedding-on-any-site)** | One `<script>` tag on any site, pointed at your `/api/ask` proxy. |
 
@@ -76,7 +76,7 @@ cd widget && npm run build
 
 Host the entire `widget/dist/` folder on any CDN (the sprite sheets live
 alongside the JS as `dist/mascots/{id}/map.png` and are fetched lazily at
-runtime — only the active mascot's sheet is downloaded), then drop one tag:
+runtime: only the active mascot's sheet is downloaded), then drop one tag:
 
 ```html
 <script src="https://your-cdn.example/mascot.iife.js"
@@ -206,7 +206,7 @@ Deploy it anywhere Node 20+ runs (Vercel, Fly, Render, Railway, etc.).
 ## About me
 
 Built by [@Manaiakalani](https://github.com/Manaiakalani) over a few
-evenings as a love letter to the late-90s desktop assistants — the kind
+evenings as a love letter to the late-90s desktop assistants: the kind
 that once asked if you were writing a letter, except this one actually
 helps. No telemetry, no tracking, no analytics; just a smile in the
 corner of your page.
