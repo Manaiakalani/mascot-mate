@@ -1,11 +1,14 @@
-# mascot-mate
-
-**Embeddable mascot widget**: Clippy, Ninja Cat, and Bob + OpenAI streaming.
-
-> Your friendly browser-side desktop assistant. Like Clippy, but
-> well-behaved on a 4K display and powered by an LLM you trust.
-
-![Mascot Mate sprite demo, with Clippy asking for a question](docs/screenshot.png)
+<div align="center">
+  <img src="docs/assets/logo.svg" alt="mascot-mate logo" width="96" />
+  <h1>mascot-mate</h1>
+  <p><strong>Embeddable mascot widget: Clippy, Ninja Cat, and Bob plus OpenAI streaming.</strong></p>
+  <p>
+    <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT license" /></a>
+    <a href="https://github.com/Manaiakalani/mascot-mate/actions/workflows/pages.yml"><img src="https://img.shields.io/github/actions/workflow/status/Manaiakalani/mascot-mate/pages.yml?label=CI" alt="CI" /></a>
+  </p>
+  <p><a href="https://manaiakalani.github.io/mascot-mate">Live demo</a> · <a href="#what">What</a> · <a href="#quick-start">Quick start</a></p>
+  <img src="docs/assets/hero.gif" alt="mascot-mate widget greeting and swapping mascots" width="800" />
+</div>
 
 ## What
 

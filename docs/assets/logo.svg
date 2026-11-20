@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" role="img" aria-labelledby="mm-logo-title">
+  <title id="mm-logo-title">mascot-mate logo</title>
+  <rect width="96" height="96" rx="22" fill="#152238"/>
+  <path fill="#fff6c8" d="M18 20h60a12 12 0 0 1 12 12v28a12 12 0 0 1-12 12H48l-14 16v-16H18a12 12 0 0 1-12-12V32a12 12 0 0 1 12-12z"/>
+  <path fill="none" stroke="#e87a2a" stroke-width="5.25" stroke-linecap="round" stroke-linejoin="round"
+    d="M39.5 34c0-4.8 3.8-8.6 8.6-8.6s8.6 3.8 8.6 8.6v17.5c0 8.6-7 15.6-15.6 15.6S25.5 60.1 25.5 51.5V36.2c0-3.5 2.8-6.4 6.4-6.4s6.4 2.9 6.4 6.4v20.5"/>
+</svg>
