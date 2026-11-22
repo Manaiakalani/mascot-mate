@@ -12,7 +12,7 @@
     "test": "npm run test -w widget && npm run test -w server"
   },
   "devDependencies": {
-    "typescript": "^5.5.4",
+    "typescript": "^7.0.2",
     "eslint": "^9.9.0",
     "@typescript-eslint/parser": "^8.73.0",
     "@typescript-eslint/eslint-plugin": "^8.73.0"
